@@ -4,7 +4,7 @@ using UnityEngine;
 namespace RustlikeClient.UI
 {
     /// <summary>
-    /// UI do inventário completo (grid de slots)
+    /// ⭐ ATUALIZADO: Suporta acesso aos slots para animações
     /// </summary>
     public class InventoryUI : MonoBehaviour
     {
@@ -88,6 +88,21 @@ namespace RustlikeClient.UI
         }
 
         /// <summary>
+        /// ⭐ NOVO: Pega slot UI por índice (para animações)
+        /// </summary>
+        public InventorySlotUI GetSlotUI(int slotIndex)
+        {
+            foreach (var slotUI in _slotUIs)
+            {
+                if (slotUI.slotIndex == slotIndex)
+                {
+                    return slotUI;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Abre inventário
         /// </summary>
         public void Open()
@@ -101,7 +116,7 @@ namespace RustlikeClient.UI
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
 
-                Debug.Log("[InventoryUI] Inventário aberto");
+                Debug.Log("[InventoryUI] 📂 Inventário aberto");
             }
         }
 
@@ -119,7 +134,7 @@ namespace RustlikeClient.UI
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
 
-                Debug.Log("[InventoryUI] Inventário fechado");
+                Debug.Log("[InventoryUI] 📁 Inventário fechado");
             }
         }
 
