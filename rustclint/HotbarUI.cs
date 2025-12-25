@@ -119,6 +119,17 @@ namespace RustlikeClient.UI
                 _hotbarSlots[i].Highlight(isSelected);
             }
         }
+		/// <summary>
+/// Retorna o InventorySlotUI de um índice da hotbar
+/// </summary>
+public InventorySlotUI GetSlotUI(int index)
+{
+    if (index < 0 || index >= _hotbarSlots.Count)
+        return null;
+
+    return _hotbarSlots[index];
+}
+
 
         public int GetSelectedSlot() => _selectedSlot;
     }
