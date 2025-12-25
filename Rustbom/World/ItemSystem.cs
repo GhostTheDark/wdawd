@@ -168,7 +168,8 @@ namespace RustlikeServer.Items
             RegisterItem(new ItemDefinition(100, "Wood", "Madeira. Material de construção básico.", ItemType.Resource, 1000));
             RegisterItem(new ItemDefinition(101, "Stone", "Pedra. Mais resistente que madeira.", ItemType.Resource, 1000));
             RegisterItem(new ItemDefinition(102, "Metal Ore", "Minério de metal. Muito valioso.", ItemType.Resource, 500));
-
+			RegisterItem(new ItemDefinition(103, "Sulfur Ore", "Minério de enxofre. Usado em explosivos.", ItemType.Resource, 500));
+			
             Console.WriteLine($"[ItemDatabase] {_items.Count} itens carregados");
         }
 
