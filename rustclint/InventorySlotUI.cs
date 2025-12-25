@@ -319,6 +319,26 @@ namespace RustlikeClient.UI
             
             TooltipUI.Instance?.Hide();
         }
+		// ==================== FEEDBACK VISUAL ====================
+
+public void PlayUseAnimation()
+{
+    if (!gameObject.activeInHierarchy) return;
+
+    StopAllCoroutines();
+    StartCoroutine(UseAnimationRoutine());
+}
+
+private System.Collections.IEnumerator UseAnimationRoutine()
+{
+    Vector3 originalScale = transform.localScale;
+    transform.localScale = originalScale * 1.15f;
+
+    yield return new WaitForSeconds(0.08f);
+
+    transform.localScale = originalScale;
+}
+
 
         // ==================== GETTERS ====================
 
