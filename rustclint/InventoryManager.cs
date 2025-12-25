@@ -4,8 +4,7 @@ using UnityEngine;
 namespace RustlikeClient.UI
 {
     /// <summary>
-    /// Gerenciador central do inventário (sincroniza com servidor)
-    /// ⭐ MELHORADO: Tecla E para abrir, melhor controle de cursor, feedback sonoro
+    /// ⭐ ATUALIZADO: Sistema completo de uso de itens (Hotbar + Double Click)
     /// </summary>
     public class InventoryManager : MonoBehaviour
     {
@@ -64,7 +63,7 @@ namespace RustlikeClient.UI
             _audioSource.playOnAwake = false;
             _audioSource.spatialBlend = 0f; // 2D sound
 
-            Debug.Log("[InventoryManager] Inicializado");
+            Debug.Log("[InventoryManager] Inicializado com sistema de uso de itens");
         }
 
         private void Start()
@@ -88,7 +87,7 @@ namespace RustlikeClient.UI
         /// </summary>
         public void UpdateInventory(Network.InventoryUpdatePacket packet)
         {
-            Debug.Log($"[InventoryManager] Recebendo update do servidor: {packet.Slots.Count} itens");
+            Debug.Log($"[InventoryManager] 📦 Recebendo update do servidor: {packet.Slots.Count} itens");
 
             // Limpa todos os slots
             for (int i = 0; i < INVENTORY_SIZE; i++)
@@ -113,23 +112,45 @@ namespace RustlikeClient.UI
         }
 
         /// <summary>
-        /// Usa item do slot (envia para servidor)
+        /// ⭐ NOVO: Usa item do slot (envia para servidor e mostra feedback)
         /// </summary>
         public async void UseItem(int slotIndex)
         {
             if (slotIndex < 0 || slotIndex >= INVENTORY_SIZE) return;
             if (_slots[slotIndex].itemId <= 0) return;
 
-            Debug.Log($"[InventoryManager] Usando item do slot {slotIndex}");
+            // Verifica se é consumível
+            var itemData = Items.ItemDatabase.Instance?.GetItem(_slots[slotIndex].itemId);
+            if (itemData == null)
+            {
+                Debug.LogWarning($"[InventoryManager] Item {_slots[slotIndex].itemId} não encontrado no database");
+                return;
+            }
 
+            if (!itemData.isConsumable)
+            {
+                Debug.Log($"[InventoryManager] ⚠️ {itemData.itemName} não é consumível");
+                ShowNotification($"{itemData.itemName} não pode ser usado", NotificationType.Warning);
+                return;
+            }
+
+            Debug.Log($"[InventoryManager] 🍴 Usando {itemData.itemName} do slot {slotIndex}");
+
+            // Feedback visual imediato (animação do slot)
+            AnimateSlotUse(slotIndex);
+
+            // Envia para servidor
             var packet = new Network.ItemUsePacket { SlotIndex = slotIndex };
             await Network.NetworkManager.Instance.SendPacketAsync(
                 Network.PacketType.ItemUse,
                 packet.Serialize()
             );
 
-            // Feedback imediato
+            // Feedback sonoro
             PlaySound(itemUseSound);
+
+            // Notificação
+            ShowNotification($"Usou {itemData.itemName}", NotificationType.Success);
         }
 
         /// <summary>
@@ -141,7 +162,7 @@ namespace RustlikeClient.UI
             if (fromSlot < 0 || fromSlot >= INVENTORY_SIZE) return;
             if (toSlot < 0 || toSlot >= INVENTORY_SIZE) return;
 
-            Debug.Log($"[InventoryManager] Movendo item: {fromSlot} → {toSlot}");
+            Debug.Log($"[InventoryManager] 🔄 Movendo item: {fromSlot} → {toSlot}");
 
             var packet = new Network.ItemMovePacket
             {
@@ -166,7 +187,7 @@ namespace RustlikeClient.UI
             if (index < 0 || index >= HOTBAR_SIZE) return;
 
             _selectedHotbarSlot = index;
-            Debug.Log($"[InventoryManager] Hotbar slot selecionado: {index + 1}");
+            Debug.Log($"[InventoryManager] 🎯 Hotbar slot selecionado: {index + 1}");
 
             // Atualiza visual da hotbar
             if (_hotbarUI != null)
@@ -176,11 +197,37 @@ namespace RustlikeClient.UI
         }
 
         /// <summary>
-        /// Usa item do slot selecionado da hotbar
+        /// ⭐ NOVO: Usa item do slot selecionado da hotbar
         /// </summary>
         public void UseSelectedHotbarItem()
         {
             UseItem(_selectedHotbarSlot);
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Animação visual ao usar item
+        /// </summary>
+        private void AnimateSlotUse(int slotIndex)
+        {
+            // Encontra o slot UI e anima
+            InventorySlotUI slotUI = null;
+
+            // Procura na hotbar primeiro
+            if (_hotbarUI != null && slotIndex < HOTBAR_SIZE)
+            {
+                slotUI = _hotbarUI.GetSlotUI(slotIndex);
+            }
+
+            // Procura no inventário
+            if (slotUI == null && _inventoryUI != null)
+            {
+                slotUI = _inventoryUI.GetSlotUI(slotIndex);
+            }
+
+            if (slotUI != null)
+            {
+                slotUI.PlayUseAnimation();
+            }
         }
 
         /// <summary>
@@ -248,6 +295,31 @@ namespace RustlikeClient.UI
         }
 
         /// <summary>
+        /// ⭐ NOVO: Mostra notificação
+        /// </summary>
+        private void ShowNotification(string message, NotificationType type)
+        {
+            if (NotificationManager.Instance != null)
+            {
+                switch (type)
+                {
+                    case NotificationType.Success:
+                        NotificationManager.Instance.ShowSuccess(message);
+                        break;
+                    case NotificationType.Warning:
+                        NotificationManager.Instance.ShowWarning(message);
+                        break;
+                    case NotificationType.Error:
+                        NotificationManager.Instance.ShowError(message);
+                        break;
+                    default:
+                        NotificationManager.Instance.ShowNotification(message);
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
         /// Abre inventário
         /// </summary>
         public void OpenInventory()
@@ -255,14 +327,10 @@ namespace RustlikeClient.UI
             if (_inventoryUI == null) return;
             if (_inventoryUI.IsOpen()) return;
 
-            // Salva estado do cursor
-            _previousCursorLockMode = Cursor.lockState;
-            _previousCursorVisible = Cursor.visible;
-
             _inventoryUI.Open();
             PlaySound(inventoryOpenSound);
 
-            Debug.Log("[InventoryManager] Inventário aberto com tecla E");
+            Debug.Log("[InventoryManager] 📂 Inventário aberto");
         }
 
         /// <summary>
@@ -276,7 +344,7 @@ namespace RustlikeClient.UI
             _inventoryUI.Close();
             PlaySound(inventoryCloseSound);
 
-            Debug.Log("[InventoryManager] Inventário fechado");
+            Debug.Log("[InventoryManager] 📁 Inventário fechado");
         }
 
         /// <summary>
@@ -305,11 +373,11 @@ namespace RustlikeClient.UI
         }
 
         /// <summary>
-        /// Hotkeys do inventário
+        /// ⭐ ATUALIZADO: Hotkeys do inventário + USO DE ITENS
         /// </summary>
         private void Update()
         {
-            // ⭐ NOVO: Tecla E para abrir/fechar inventário
+            // Tecla E para abrir/fechar inventário
             if (Input.GetKeyDown(inventoryKey))
             {
                 ToggleInventory();
@@ -325,7 +393,7 @@ namespace RustlikeClient.UI
                 }
             }
 
-            // ⭐ MELHORADO: ESC apenas fecha inventário (não trava cursor)
+            // ESC fecha inventário
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 if (IsInventoryOpen())
@@ -334,18 +402,22 @@ namespace RustlikeClient.UI
                 }
             }
 
-            // Teclas 1-6: Seleciona hotbar (apenas quando inventário fechado)
+            // ⭐ NOVO: Teclas 1-6 para SELECIONAR e USAR da hotbar
             if (!IsInventoryOpen())
             {
                 for (int i = 0; i < HOTBAR_SIZE; i++)
                 {
+                    // Detecta tecla pressionada (Alpha1 = tecla 1, Alpha2 = tecla 2, etc)
                     if (Input.GetKeyDown(KeyCode.Alpha1 + i))
                     {
                         SelectHotbarSlot(i);
+                        
+                        // ⭐ USA ITEM IMEDIATAMENTE ao pressionar a tecla
+                        UseSelectedHotbarItem();
                     }
                 }
 
-                // Mouse scroll: Navega hotbar
+                // Mouse scroll: Navega hotbar (SEM usar)
                 float scroll = Input.GetAxis("Mouse ScrollWheel");
                 if (scroll > 0f)
                 {
@@ -367,5 +439,16 @@ namespace RustlikeClient.UI
     {
         public int itemId;
         public int quantity;
+    }
+
+    /// <summary>
+    /// Tipos de notificação
+    /// </summary>
+    public enum NotificationType
+    {
+        Success,
+        Warning,
+        Error,
+        Info
     }
 }
