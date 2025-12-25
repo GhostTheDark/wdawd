@@ -8,7 +8,7 @@ using RustlikeServer.Items;
 namespace RustlikeServer.Core
 {
     /// <summary>
-    /// ⭐ ATUALIZADO COM SISTEMA DE GATHERING - Gerencia um cliente conectado
+    /// ⭐ ATUALIZADO: Validação de uso de itens - não consome se stats já estão cheias
     /// </summary>
     public class ClientHandler
     {
@@ -64,7 +64,6 @@ namespace RustlikeServer.Core
                         await HandleItemMove(packet.Data);
                         break;
 
-                    // ⭐ NOVO: Handle de coleta de recursos
                     case PacketType.ResourceHit:
                         await HandleResourceHit(packet.Data);
                         break;
@@ -121,7 +120,6 @@ namespace RustlikeServer.Core
 
             await Task.Delay(150);
 
-            // Envia inventário inicial
             await SendInventoryUpdate();
 
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -131,7 +129,6 @@ namespace RustlikeServer.Core
 
             await Task.Delay(300);
 
-            // ⭐ NOVO: Envia recursos do mundo
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"[ClientHandler] 🌲 Enviando recursos do mundo para {_player.Name}...");
             Console.ResetColor();
@@ -171,34 +168,127 @@ namespace RustlikeServer.Core
             }
         }
 
+        /// <summary>
+        /// ⭐ ATUALIZADO: Valida se o item pode ser usado antes de consumir
+        /// </summary>
         private async Task HandleItemUse(byte[] data)
         {
             if (_player == null) return;
 
             var packet = ItemUsePacket.Deserialize(data);
-            Console.WriteLine($"[ClientHandler] 🎒 {_player.Name} usou item do slot {packet.SlotIndex}");
+            Console.WriteLine($"[ClientHandler] 🎒 {_player.Name} tentou usar item do slot {packet.SlotIndex}");
 
-            var itemDef = _player.Inventory.ConsumeItem(packet.SlotIndex);
-            if (itemDef == null)
+            // Pega o item do inventário (SEM consumir ainda)
+            var itemStack = _player.Inventory.GetSlot(packet.SlotIndex);
+            if (itemStack == null || itemStack.Definition == null)
             {
-                Console.WriteLine($"[ClientHandler] ⚠️ Slot {packet.SlotIndex} vazio ou item não consumível");
+                Console.WriteLine($"[ClientHandler] ⚠️ Slot {packet.SlotIndex} vazio");
+                SendItemUseFailure("Slot vazio");
                 return;
             }
 
-            if (itemDef.HealthRestore > 0)
-                _player.Stats.Heal(itemDef.HealthRestore);
+            var itemDef = itemStack.Definition;
+
+            // Verifica se é consumível
+            if (!itemDef.IsConsumable)
+            {
+                Console.WriteLine($"[ClientHandler] ⚠️ Item {itemDef.Name} não é consumível");
+                SendItemUseFailure($"{itemDef.Name} não pode ser usado");
+                return;
+            }
+
+            // ⭐ NOVA VALIDAÇÃO: Verifica se há benefício em usar o item
+            bool canUse = CanUseItem(itemDef, _player.Stats);
             
-            if (itemDef.HungerRestore > 0)
-                _player.Stats.Eat(itemDef.HungerRestore);
+            if (!canUse)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[ClientHandler] ⚠️ {_player.Name} tentou usar {itemDef.Name} mas stats já estão cheias");
+                Console.ResetColor();
+                
+                SendItemUseFailure(GetItemUseFailureReason(itemDef, _player.Stats));
+                return;
+            }
+
+            // ✅ Stats permitem uso - AGORA CONSOME o item
+            var consumedItem = _player.Inventory.ConsumeItem(packet.SlotIndex);
+            if (consumedItem == null)
+            {
+                Console.WriteLine($"[ClientHandler] ❌ Erro ao consumir item do slot {packet.SlotIndex}");
+                return;
+            }
+
+            // Aplica efeitos
+            if (consumedItem.HealthRestore > 0)
+                _player.Stats.Heal(consumedItem.HealthRestore);
             
-            if (itemDef.ThirstRestore > 0)
-                _player.Stats.Drink(itemDef.ThirstRestore);
+            if (consumedItem.HungerRestore > 0)
+                _player.Stats.Eat(consumedItem.HungerRestore);
+            
+            if (consumedItem.ThirstRestore > 0)
+                _player.Stats.Drink(consumedItem.ThirstRestore);
 
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[ClientHandler] ✅ Efeitos aplicados: HP+{itemDef.HealthRestore} Hunger+{itemDef.HungerRestore} Thirst+{itemDef.ThirstRestore}");
+            Console.WriteLine($"[ClientHandler] ✅ {_player.Name} usou {consumedItem.Name}");
+            Console.WriteLine($"[ClientHandler] Efeitos: HP+{consumedItem.HealthRestore} Hunger+{consumedItem.HungerRestore} Thirst+{consumedItem.ThirstRestore}");
             Console.ResetColor();
 
             await SendInventoryUpdate();
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Verifica se o item pode ser usado baseado nas stats do player
+        /// </summary>
+        private bool CanUseItem(ItemDefinition item, PlayerStats stats)
+        {
+            // Se restaura vida e a vida não está cheia, pode usar
+            if (item.HealthRestore > 0 && stats.Health < 100f)
+                return true;
+
+            // Se restaura fome e a fome não está cheia, pode usar
+            if (item.HungerRestore > 0 && stats.Hunger < 100f)
+                return true;
+
+            // Se restaura sede e a sede não está cheia, pode usar
+            if (item.ThirstRestore > 0 && stats.Thirst < 100f)
+                return true;
+
+            // Se não restaura nada, não pode usar
+            return false;
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Retorna mensagem apropriada do por que não pode usar
+        /// </summary>
+        private string GetItemUseFailureReason(ItemDefinition item, PlayerStats stats)
+        {
+            if (item.HealthRestore > 0 && stats.Health >= 100f)
+                return "Vida já está cheia";
+
+            if (item.HungerRestore > 0 && stats.Hunger >= 100f)
+                return "Fome já está saciada";
+
+            if (item.ThirstRestore > 0 && stats.Thirst >= 100f)
+                return "Sede já está saciada";
+
+            // Item híbrido - verifica qual stat está impedindo
+            if (stats.Health >= 100f && stats.Hunger >= 100f && stats.Thirst >= 100f)
+                return "Todas as stats já estão cheias";
+
+            return "Não pode usar este item agora";
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Envia mensagem de falha ao cliente
+        /// </summary>
+        private void SendItemUseFailure(string reason)
+        {
+            // Cria pacote de falha (você pode criar um novo PacketType para isso)
+            // Por enquanto, apenas loga
+            Console.WriteLine($"[ClientHandler] Enviando falha de uso: {reason}");
+            
+            // TODO: Criar ItemUseFailurePacket e enviar para o cliente
+            // Para mostrar notificação na tela
         }
 
         private async Task HandleItemMove(byte[] data)
@@ -215,36 +305,30 @@ namespace RustlikeServer.Core
             }
         }
 
-        /// <summary>
-        /// ⭐ NOVO: Handle quando player bate em recurso
-        /// </summary>
         private async Task HandleResourceHit(byte[] data)
         {
             if (_player == null) return;
 
             var packet = ResourceHitPacket.Deserialize(data);
             
-            // Processa coleta no ResourceManager
             var result = _server.GatherResource(packet.ResourceId, packet.Damage, packet.ToolType, _player);
             
             if (result != null)
             {
-                // Adiciona recursos ao inventário do jogador
                 bool success = false;
                 
                 if (result.WoodGained > 0)
-                    success |= _player.Inventory.AddItem(100, result.WoodGained); // Item ID 100 = Wood
+                    success |= _player.Inventory.AddItem(100, result.WoodGained);
                 
                 if (result.StoneGained > 0)
-                    success |= _player.Inventory.AddItem(101, result.StoneGained); // Item ID 101 = Stone
+                    success |= _player.Inventory.AddItem(101, result.StoneGained);
                 
                 if (result.MetalGained > 0)
-                    success |= _player.Inventory.AddItem(102, result.MetalGained); // Item ID 102 = Metal
+                    success |= _player.Inventory.AddItem(102, result.MetalGained);
                 
                 if (result.SulfurGained > 0)
-                    success |= _player.Inventory.AddItem(103, result.SulfurGained); // Item ID 103 = Sulfur (se criar)
+                    success |= _player.Inventory.AddItem(103, result.SulfurGained);
 
-                // Envia resultado da coleta para o cliente
                 var gatherPacket = new GatherResultPacket
                 {
                     WoodGained = result.WoodGained,
@@ -255,16 +339,13 @@ namespace RustlikeServer.Core
                 
                 SendPacket(PacketType.GatherResult, gatherPacket.Serialize());
 
-                // Atualiza inventário
                 if (success)
                 {
                     await SendInventoryUpdate();
                 }
 
-                // Atualiza o recurso para todos os jogadores
                 _server.BroadcastResourceUpdate(packet.ResourceId);
 
-                // Se foi destruído, notifica todos
                 if (result.WasDestroyed)
                 {
                     _server.BroadcastResourceDestroyed(packet.ResourceId);
@@ -298,9 +379,6 @@ namespace RustlikeServer.Core
             await Task.CompletedTask;
         }
 
-        /// <summary>
-        /// ⭐ Envia pacote via LiteNetLib
-        /// </summary>
         public void SendPacket(PacketType type, byte[] data, LiteNetLib.DeliveryMethod method = LiteNetLib.DeliveryMethod.ReliableOrdered)
         {
             try
