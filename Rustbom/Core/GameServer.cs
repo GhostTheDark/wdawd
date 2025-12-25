@@ -6,11 +6,12 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using RustlikeServer.Network;
 using RustlikeServer.World;
+using RustlikeServer.Crafting;
 
 namespace RustlikeServer.Core
 {
     /// <summary>
-    /// ⭐ ATUALIZADO COM SISTEMA DE GATHERING - Servidor autoritativo UDP
+    /// ⭐ ATUALIZADO COM SISTEMA DE CRAFTING - Servidor autoritativo UDP
     /// </summary>
     public class GameServer : INetEventListener
     {
@@ -23,15 +24,21 @@ namespace RustlikeServer.Core
         private readonly int _port;
         private readonly object _playersLock = new object();
 
-        // ⭐ NOVO: Resource Manager
+        // Resource Manager
         private ResourceManager _resourceManager;
+
+        // ⭐ NOVO: Crafting Manager
+        private CraftingManager _craftingManager;
 
         // Stats update
         private const float STATS_UPDATE_RATE = 1f;
         private const float STATS_SYNC_RATE = 2f;
         
-        // ⭐ NOVO: Resource update
-        private const float RESOURCE_UPDATE_RATE = 10f; // Verifica respawns a cada 10s
+        // Resource update
+        private const float RESOURCE_UPDATE_RATE = 10f;
+
+        // ⭐ NOVO: Crafting update
+        private const float CRAFTING_UPDATE_RATE = 0.5f; // Verifica craftings 2x por segundo
 
         private NetDataWriter _reusableWriter;
 
@@ -45,8 +52,11 @@ namespace RustlikeServer.Core
             _isRunning = false;
             _reusableWriter = new NetDataWriter();
             
-            // ⭐ NOVO: Inicializa Resource Manager
+            // Inicializa Resource Manager
             _resourceManager = new ResourceManager();
+
+            // ⭐ NOVO: Inicializa Crafting Manager
+            _craftingManager = new CraftingManager();
         }
 
         public async Task StartAsync()
@@ -70,19 +80,24 @@ namespace RustlikeServer.Core
                 Console.WriteLine($"║  Porta: {_port}                                    ║");
                 Console.WriteLine($"║  Sistema de Sobrevivência: ATIVO               ║");
                 Console.WriteLine($"║  Sistema de Gathering: ATIVO 🪓🪨             ║");
+                Console.WriteLine($"║  Sistema de Crafting: ATIVO 🔨                ║");
                 Console.WriteLine($"║  Aguardando conexões...                        ║");
                 Console.WriteLine($"╚════════════════════════════════════════════════╝");
                 Console.WriteLine();
 
-                // ⭐ NOVO: Inicializa recursos do mundo
+                // Inicializa recursos do mundo
                 _resourceManager.Initialize();
+
+                // ⭐ NOVO: Inicializa crafting
+                _craftingManager.Initialize();
 
                 Task updateTask = UpdateLoopAsync();
                 Task statsTask = UpdateStatsLoopAsync();
                 Task monitorTask = MonitorPlayersAsync();
-                Task resourceTask = UpdateResourcesLoopAsync(); // ⭐ NOVO
+                Task resourceTask = UpdateResourcesLoopAsync();
+                Task craftingTask = UpdateCraftingLoopAsync(); // ⭐ NOVO
 
-                await Task.WhenAll(updateTask, statsTask, monitorTask, resourceTask);
+                await Task.WhenAll(updateTask, statsTask, monitorTask, resourceTask, craftingTask);
             }
             catch (Exception ex)
             {
@@ -257,7 +272,7 @@ namespace RustlikeServer.Core
 
             if (sentCount > 0 && type != PacketType.PlayerMovement && type != PacketType.StatsUpdate && type != PacketType.ResourceUpdate)
             {
-                Console.WriteLine($"[GameServer] Broadcast {type} enviado para {sentCount} jogadores (method: {method})");
+                Console.WriteLine($"[GameServer] Broadcast {type} enviado para {sentCount} jogadores");
             }
         }
 
@@ -273,7 +288,6 @@ namespace RustlikeServer.Core
             };
 
             byte[] data = spawnPacket.Serialize();
-            Console.WriteLine($"[GameServer] Broadcasting spawn de {player.Name} (ID: {player.Id})");
             BroadcastToAll(PacketType.PlayerSpawn, data, player.Id, DeliveryMethod.ReliableOrdered);
         }
 
@@ -296,7 +310,6 @@ namespace RustlikeServer.Core
         public void BroadcastPlayerDisconnect(int playerId)
         {
             byte[] data = BitConverter.GetBytes(playerId);
-            Console.WriteLine($"[GameServer] Broadcasting disconnect de Player ID: {playerId}");
             BroadcastToAll(PacketType.PlayerDisconnect, data, playerId, DeliveryMethod.ReliableOrdered);
         }
 
@@ -307,25 +320,15 @@ namespace RustlikeServer.Core
             
             int count = 0;
 
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"\n[GameServer] ========== ENVIANDO PLAYERS EXISTENTES ==========");
-            Console.WriteLine($"[GameServer] Novo player ID: {newPlayerId}");
-            Console.ResetColor();
-
             List<Player> playersSnapshot;
             lock (_playersLock)
             {
                 playersSnapshot = _players.Values.ToList();
-                Console.WriteLine($"[GameServer] Total de players no servidor: {playersSnapshot.Count}");
             }
 
             foreach (var player in playersSnapshot)
             {
                 if (player.Id == newPlayerId) continue;
-
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[GameServer]   → ✅ Enviando spawn de {player.Name} para novo player...");
-                Console.ResetColor();
 
                 var spawnPacket = new PlayerSpawnPacket
                 {
@@ -342,35 +345,20 @@ namespace RustlikeServer.Core
                 {
                     SendPacket(newPeer, PacketType.PlayerSpawn, data, DeliveryMethod.ReliableOrdered);
                     await Task.Delay(50);
-                    
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"[GameServer]      ✅ ENVIADO COM SUCESSO!");
-                    Console.ResetColor();
                     count++;
                 }
                 catch (Exception ex)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[GameServer]      ❌ ERRO: {ex.Message}");
-                    Console.ResetColor();
+                    Console.WriteLine($"[GameServer] Erro ao enviar player: {ex.Message}");
                 }
             }
-
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"[GameServer] ========== FIM DO ENVIO ==========");
-            Console.WriteLine($"[GameServer] Total de players enviados: {count}");
-            Console.ResetColor();
-            Console.WriteLine();
         }
 
-        // ⭐ NOVO: Envia recursos para um cliente
+        // ==================== RESOURCE METHODS ====================
+
         public async Task SendResourcesToClient(ClientHandler client)
         {
             var resources = _resourceManager.GetAllResources();
-            
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[GameServer] Enviando {resources.Count} recursos para {client.GetPlayer()?.Name}");
-            Console.ResetColor();
 
             var packet = new ResourcesSyncPacket();
             
@@ -393,13 +381,11 @@ namespace RustlikeServer.Core
             await Task.CompletedTask;
         }
 
-        // ⭐ NOVO: Processa coleta de recurso
         public GatherResult GatherResource(int resourceId, float damage, int toolType, Player player)
         {
             return _resourceManager.GatherResource(resourceId, damage, toolType, player);
         }
 
-        // ⭐ NOVO: Broadcast update de recurso
         public void BroadcastResourceUpdate(int resourceId)
         {
             var resource = _resourceManager.GetResource(resourceId);
@@ -415,7 +401,6 @@ namespace RustlikeServer.Core
             BroadcastToAll(PacketType.ResourceUpdate, packet.Serialize(), -1, DeliveryMethod.Unreliable);
         }
 
-        // ⭐ NOVO: Broadcast de recurso destruído
         public void BroadcastResourceDestroyed(int resourceId)
         {
             var packet = new ResourceDestroyedPacket
@@ -423,14 +408,9 @@ namespace RustlikeServer.Core
                 ResourceId = resourceId
             };
 
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[GameServer] 💥 Broadcasting destruição do recurso {resourceId}");
-            Console.ResetColor();
-
             BroadcastToAll(PacketType.ResourceDestroyed, packet.Serialize(), -1, DeliveryMethod.ReliableOrdered);
         }
 
-        // ⭐ NOVO: Broadcast de recurso respawnado
         public void BroadcastResourceRespawn(int resourceId)
         {
             var resource = _resourceManager.GetResource(resourceId);
@@ -443,11 +423,152 @@ namespace RustlikeServer.Core
                 MaxHealth = resource.MaxHealth
             };
 
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[GameServer] ♻️ Broadcasting respawn do recurso {resourceId}");
+            BroadcastToAll(PacketType.ResourceRespawn, packet.Serialize(), -1, DeliveryMethod.ReliableOrdered);
+        }
+
+        // ==================== ⭐ NOVO: CRAFTING METHODS ====================
+
+        /// <summary>
+        /// ⭐ NOVO: Envia receitas de crafting para um cliente
+        /// </summary>
+        public async Task SendRecipesToClient(ClientHandler client)
+        {
+            var recipes = _craftingManager.GetAllRecipes();
+            
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[GameServer] Enviando {recipes.Count} receitas para {client.GetPlayer()?.Name}");
             Console.ResetColor();
 
-            BroadcastToAll(PacketType.ResourceRespawn, packet.Serialize(), -1, DeliveryMethod.ReliableOrdered);
+            var packet = new RecipesSyncPacket();
+            
+            foreach (var recipe in recipes)
+            {
+                var recipeData = new RecipeData
+                {
+                    Id = recipe.Id,
+                    Name = recipe.Name,
+                    ResultItemId = recipe.ResultItemId,
+                    ResultQuantity = recipe.ResultQuantity,
+                    CraftingTime = recipe.CraftingTime,
+                    RequiredWorkbench = recipe.RequiredWorkbench
+                };
+
+                foreach (var ingredient in recipe.Ingredients)
+                {
+                    recipeData.Ingredients.Add(new IngredientData
+                    {
+                        ItemId = ingredient.ItemId,
+                        Quantity = ingredient.Quantity
+                    });
+                }
+
+                packet.Recipes.Add(recipeData);
+            }
+
+            SendPacket(client.GetPeer(), PacketType.RecipesSync, packet.Serialize(), DeliveryMethod.ReliableOrdered);
+            
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Inicia crafting para um player
+        /// </summary>
+        public CraftResult StartCrafting(int playerId, int recipeId)
+        {
+            var player = GetPlayer(playerId);
+            if (player == null)
+            {
+                return new CraftResult
+                {
+                    Success = false,
+                    Message = "Player não encontrado"
+                };
+            }
+
+            return _craftingManager.StartCrafting(playerId, recipeId, player.Inventory);
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Cancela crafting
+        /// </summary>
+        public bool CancelCrafting(int playerId, int queueIndex)
+        {
+            return _craftingManager.CancelCrafting(playerId, queueIndex);
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Pega fila de crafting de um player
+        /// </summary>
+        public List<CraftingProgress> GetPlayerCraftQueue(int playerId)
+        {
+            return _craftingManager.GetPlayerQueue(playerId);
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Loop de atualização de crafting
+        /// </summary>
+        private async Task UpdateCraftingLoopAsync()
+        {
+            DateTime lastUpdate = DateTime.Now;
+
+            while (_isRunning)
+            {
+                await Task.Delay(500); // 2x por segundo
+
+                DateTime now = DateTime.Now;
+
+                if ((now - lastUpdate).TotalSeconds >= CRAFTING_UPDATE_RATE)
+                {
+                    lastUpdate = now;
+                    
+                    // Atualiza craftings e pega completados
+                    var completedCrafts = _craftingManager.Update();
+
+                    // Processa craftings completados
+                    foreach (var completed in completedCrafts)
+                    {
+                        await HandleCraftComplete(completed);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Processa crafting completo
+        /// </summary>
+        private async Task HandleCraftComplete(CraftCompleteResult result)
+        {
+            var player = GetPlayer(result.PlayerId);
+            if (player == null) return;
+
+            // Adiciona item ao inventário
+            bool success = player.Inventory.AddItem(result.ResultItemId, result.ResultQuantity);
+
+            if (success)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[GameServer] ✅ Crafting completo! Player {result.PlayerId} recebeu {result.ResultQuantity}x Item {result.ResultItemId}");
+                Console.ResetColor();
+
+                // Notifica o cliente
+                if (_playerPeers.TryGetValue(result.PlayerId, out var peer) && 
+                    _clients.TryGetValue(peer, out var handler))
+                {
+                    await handler.NotifyCraftComplete(
+                        result.RecipeId,
+                        result.ResultItemId,
+                        result.ResultQuantity
+                    );
+                }
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[GameServer] ❌ Inventário cheio! Item {result.ResultItemId} perdido");
+                Console.ResetColor();
+                
+                // TODO: Dropar item no chão
+            }
         }
 
         // ==================== STATS SYSTEM ====================
@@ -526,7 +647,6 @@ namespace RustlikeServer.Core
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"\n[GameServer] ☠️  MORTE: {player.Name} (ID: {player.Id})");
-            Console.WriteLine($"[GameServer] Causa: {GetDeathCause(player)}");
             Console.ResetColor();
 
             var deathPacket = new PlayerDeathPacket
@@ -538,24 +658,15 @@ namespace RustlikeServer.Core
             BroadcastToAll(PacketType.PlayerDeath, deathPacket.Serialize(), -1, DeliveryMethod.ReliableOrdered);
         }
 
-        private string GetDeathCause(Player player)
-        {
-            var stats = player.Stats;
-            if (stats.Hunger <= 0) return "Fome";
-            if (stats.Thirst <= 0) return "Sede";
-            if (stats.Temperature < 0) return "Frio Extremo";
-            if (stats.Temperature > 40) return "Calor Extremo";
-            return "Desconhecida";
-        }
+        // ==================== RESOURCE UPDATE ====================
 
-        // ⭐ NOVO: Update de recursos (respawns)
         private async Task UpdateResourcesLoopAsync()
         {
             DateTime lastUpdate = DateTime.Now;
 
             while (_isRunning)
             {
-                await Task.Delay(1000); // Verifica a cada 1 segundo
+                await Task.Delay(1000);
 
                 DateTime now = DateTime.Now;
 
@@ -583,7 +694,6 @@ namespace RustlikeServer.Core
                 
                 foreach (var player in timedOutPlayers)
                 {
-                    Console.WriteLine($"[GameServer] Jogador {player.Name} (ID: {player.Id}) timeout");
                     RemovePlayer(player.Id);
                 }
 
@@ -594,24 +704,7 @@ namespace RustlikeServer.Core
                     Console.WriteLine($"║  JOGADORES ONLINE: {_players.Count,-2}                         ║");
                     Console.WriteLine($"║  CLIENTS CONECTADOS: {_clients.Count,-2}                      ║");
                     Console.WriteLine($"╚════════════════════════════════════════════════╝");
-                    
-                    if (_players.Count > 0)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("\n→ Lista de Jogadores:");
-                        foreach (var player in _players.Values)
-                        {
-                            NetPeer peer = _playerPeers.TryGetValue(player.Id, out var p) ? p : null;
-                            Console.WriteLine($"   • ID {player.Id}: {player.Name}");
-                            Console.WriteLine($"     Posição: ({player.Position.X:F1}, {player.Position.Y:F1}, {player.Position.Z:F1})");
-                            Console.WriteLine($"     Stats: {player.Stats}");
-                            Console.WriteLine($"     Ping: {(peer != null ? $"{peer.Ping}ms" : "N/A")}");
-                            Console.WriteLine($"     Status: {(player.IsDead() ? "☠️ MORTO" : "✅ VIVO")}");
-                        }
-                    }
-                    
                     Console.ResetColor();
-                    Console.WriteLine();
                 }
             }
         }

@@ -8,7 +8,7 @@ using RustlikeServer.Items;
 namespace RustlikeServer.Core
 {
     /// <summary>
-    /// ⭐ ATUALIZADO: Validação de uso de itens - não consome se stats já estão cheias
+    /// ⭐ ATUALIZADO COM SISTEMA DE CRAFTING
     /// </summary>
     public class ClientHandler
     {
@@ -67,6 +67,15 @@ namespace RustlikeServer.Core
                     case PacketType.ResourceHit:
                         await HandleResourceHit(packet.Data);
                         break;
+
+                    // ⭐ NOVO: Handlers de Crafting
+                    case PacketType.CraftRequest:
+                        await HandleCraftRequest(packet.Data);
+                        break;
+
+                    case PacketType.CraftCancel:
+                        await HandleCraftCancel(packet.Data);
+                        break;
                 }
             }
             catch (Exception ex)
@@ -120,6 +129,7 @@ namespace RustlikeServer.Core
 
             await Task.Delay(150);
 
+            // Envia inventário
             await SendInventoryUpdate();
 
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -133,6 +143,14 @@ namespace RustlikeServer.Core
             Console.WriteLine($"[ClientHandler] 🌲 Enviando recursos do mundo para {_player.Name}...");
             Console.ResetColor();
             await _server.SendResourcesToClient(this);
+
+            await Task.Delay(300);
+
+            // ⭐ NOVO: Envia receitas de crafting
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[ClientHandler] 🔨 Enviando receitas de crafting para {_player.Name}...");
+            Console.ResetColor();
+            await _server.SendRecipesToClient(this);
 
             await Task.Delay(300);
 
@@ -168,9 +186,6 @@ namespace RustlikeServer.Core
             }
         }
 
-        /// <summary>
-        /// ⭐ ATUALIZADO: Valida se o item pode ser usado antes de consumir
-        /// </summary>
         private async Task HandleItemUse(byte[] data)
         {
             if (_player == null) return;
@@ -178,26 +193,21 @@ namespace RustlikeServer.Core
             var packet = ItemUsePacket.Deserialize(data);
             Console.WriteLine($"[ClientHandler] 🎒 {_player.Name} tentou usar item do slot {packet.SlotIndex}");
 
-            // Pega o item do inventário (SEM consumir ainda)
             var itemStack = _player.Inventory.GetSlot(packet.SlotIndex);
             if (itemStack == null || itemStack.Definition == null)
             {
                 Console.WriteLine($"[ClientHandler] ⚠️ Slot {packet.SlotIndex} vazio");
-                SendItemUseFailure("Slot vazio");
                 return;
             }
 
             var itemDef = itemStack.Definition;
 
-            // Verifica se é consumível
             if (!itemDef.IsConsumable)
             {
                 Console.WriteLine($"[ClientHandler] ⚠️ Item {itemDef.Name} não é consumível");
-                SendItemUseFailure($"{itemDef.Name} não pode ser usado");
                 return;
             }
 
-            // ⭐ NOVA VALIDAÇÃO: Verifica se há benefício em usar o item
             bool canUse = CanUseItem(itemDef, _player.Stats);
             
             if (!canUse)
@@ -205,12 +215,9 @@ namespace RustlikeServer.Core
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"[ClientHandler] ⚠️ {_player.Name} tentou usar {itemDef.Name} mas stats já estão cheias");
                 Console.ResetColor();
-                
-                SendItemUseFailure(GetItemUseFailureReason(itemDef, _player.Stats));
                 return;
             }
 
-            // ✅ Stats permitem uso - AGORA CONSOME o item
             var consumedItem = _player.Inventory.ConsumeItem(packet.SlotIndex);
             if (consumedItem == null)
             {
@@ -218,7 +225,6 @@ namespace RustlikeServer.Core
                 return;
             }
 
-            // Aplica efeitos
             if (consumedItem.HealthRestore > 0)
                 _player.Stats.Heal(consumedItem.HealthRestore);
             
@@ -230,65 +236,23 @@ namespace RustlikeServer.Core
 
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"[ClientHandler] ✅ {_player.Name} usou {consumedItem.Name}");
-            Console.WriteLine($"[ClientHandler] Efeitos: HP+{consumedItem.HealthRestore} Hunger+{consumedItem.HungerRestore} Thirst+{consumedItem.ThirstRestore}");
             Console.ResetColor();
 
             await SendInventoryUpdate();
         }
 
-        /// <summary>
-        /// ⭐ NOVO: Verifica se o item pode ser usado baseado nas stats do player
-        /// </summary>
         private bool CanUseItem(ItemDefinition item, PlayerStats stats)
         {
-            // Se restaura vida e a vida não está cheia, pode usar
             if (item.HealthRestore > 0 && stats.Health < 100f)
                 return true;
 
-            // Se restaura fome e a fome não está cheia, pode usar
             if (item.HungerRestore > 0 && stats.Hunger < 100f)
                 return true;
 
-            // Se restaura sede e a sede não está cheia, pode usar
             if (item.ThirstRestore > 0 && stats.Thirst < 100f)
                 return true;
 
-            // Se não restaura nada, não pode usar
             return false;
-        }
-
-        /// <summary>
-        /// ⭐ NOVO: Retorna mensagem apropriada do por que não pode usar
-        /// </summary>
-        private string GetItemUseFailureReason(ItemDefinition item, PlayerStats stats)
-        {
-            if (item.HealthRestore > 0 && stats.Health >= 100f)
-                return "Vida já está cheia";
-
-            if (item.HungerRestore > 0 && stats.Hunger >= 100f)
-                return "Fome já está saciada";
-
-            if (item.ThirstRestore > 0 && stats.Thirst >= 100f)
-                return "Sede já está saciada";
-
-            // Item híbrido - verifica qual stat está impedindo
-            if (stats.Health >= 100f && stats.Hunger >= 100f && stats.Thirst >= 100f)
-                return "Todas as stats já estão cheias";
-
-            return "Não pode usar este item agora";
-        }
-
-        /// <summary>
-        /// ⭐ NOVO: Envia mensagem de falha ao cliente
-        /// </summary>
-        private void SendItemUseFailure(string reason)
-        {
-            // Cria pacote de falha (você pode criar um novo PacketType para isso)
-            // Por enquanto, apenas loga
-            Console.WriteLine($"[ClientHandler] Enviando falha de uso: {reason}");
-            
-            // TODO: Criar ItemUseFailurePacket e enviar para o cliente
-            // Para mostrar notificação na tela
         }
 
         private async Task HandleItemMove(byte[] data)
@@ -354,6 +318,125 @@ namespace RustlikeServer.Core
 
             await Task.CompletedTask;
         }
+
+        // ==================== ⭐ NOVOS HANDLERS DE CRAFTING ====================
+
+        /// <summary>
+        /// ⭐ NOVO: Handle de solicitação de crafting
+        /// </summary>
+        private async Task HandleCraftRequest(byte[] data)
+        {
+            if (_player == null) return;
+
+            var packet = CraftRequestPacket.Deserialize(data);
+            
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"[ClientHandler] 🔨 {_player.Name} solicitou crafting da receita {packet.RecipeId}");
+            Console.ResetColor();
+
+            var result = _server.StartCrafting(_player.Id, packet.RecipeId);
+
+            // Envia resposta
+            var response = new CraftStartedPacket
+            {
+                RecipeId = packet.RecipeId,
+                Duration = result.Duration,
+                Success = result.Success,
+                Message = result.Message
+            };
+
+            SendPacket(PacketType.CraftStarted, response.Serialize());
+
+            if (result.Success)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[ClientHandler] ✅ Crafting iniciado para {_player.Name}");
+                Console.ResetColor();
+
+                // Atualiza inventário (recursos foram consumidos)
+                await SendInventoryUpdate();
+
+                // Envia fila de crafting atualizada
+                await SendCraftQueueUpdate();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[ClientHandler] ❌ Falha no crafting: {result.Message}");
+                Console.ResetColor();
+            }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Handle de cancelamento de crafting
+        /// </summary>
+        private async Task HandleCraftCancel(byte[] data)
+        {
+            if (_player == null) return;
+
+            var packet = CraftCancelPacket.Deserialize(data);
+            
+            Console.WriteLine($"[ClientHandler] ❌ {_player.Name} cancelou crafting no índice {packet.QueueIndex}");
+
+            bool success = _server.CancelCrafting(_player.Id, packet.QueueIndex);
+
+            if (success)
+            {
+                await SendCraftQueueUpdate();
+            }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Envia fila de crafting atualizada
+        /// </summary>
+        public async Task SendCraftQueueUpdate()
+        {
+            if (_player == null) return;
+
+            var queue = _server.GetPlayerCraftQueue(_player.Id);
+            var packet = new CraftQueueUpdatePacket();
+
+            foreach (var progress in queue)
+            {
+                packet.QueueItems.Add(new CraftQueueItem
+                {
+                    RecipeId = progress.RecipeId,
+                    Progress = progress.GetProgress(),
+                    RemainingTime = progress.GetRemainingTime()
+                });
+            }
+
+            SendPacket(PacketType.CraftQueueUpdate, packet.Serialize());
+            
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Notifica que crafting foi completo
+        /// </summary>
+        public async Task NotifyCraftComplete(int recipeId, int resultItemId, int resultQuantity)
+        {
+            var packet = new CraftCompletePacket
+            {
+                RecipeId = recipeId,
+                ResultItemId = resultItemId,
+                ResultQuantity = resultQuantity
+            };
+
+            SendPacket(PacketType.CraftComplete, packet.Serialize());
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[ClientHandler] ✅ Notificou {_player.Name} que crafting foi completo");
+            Console.ResetColor();
+
+            // Atualiza inventário
+            await SendInventoryUpdate();
+
+            // Atualiza fila
+            await SendCraftQueueUpdate();
+        }
+
+        // ==================== MÉTODOS AUXILIARES ====================
 
         private async Task SendInventoryUpdate()
         {

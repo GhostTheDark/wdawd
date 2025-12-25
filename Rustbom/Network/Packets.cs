@@ -30,13 +30,21 @@ namespace RustlikeServer.Network
         ItemDrop = 16,
         HotbarSelect = 17,
         
-        // ⭐ NOVO: Sistema de Gathering/Recursos
-        ResourcesSync = 18,      // Servidor -> Cliente (sincroniza todos os recursos)
-        ResourceHit = 19,        // Cliente -> Servidor (player bate no recurso)
-        ResourceUpdate = 20,     // Servidor -> Todos (atualiza HP de recurso)
-        ResourceDestroyed = 21,  // Servidor -> Todos (recurso foi destruído)
-        ResourceRespawn = 22,    // Servidor -> Todos (recurso respawnou)
-        GatherResult = 23        // Servidor -> Cliente (recursos coletados)
+        // Sistema de Gathering/Recursos
+        ResourcesSync = 18,
+        ResourceHit = 19,
+        ResourceUpdate = 20,
+        ResourceDestroyed = 21,
+        ResourceRespawn = 22,
+        GatherResult = 23,
+        
+        // ⭐ NOVO: Sistema de Crafting
+        RecipesSync = 24,          // Servidor -> Cliente (envia todas as receitas)
+        CraftRequest = 25,         // Cliente -> Servidor (solicita crafting)
+        CraftStarted = 26,         // Servidor -> Cliente (crafting iniciado)
+        CraftComplete = 27,        // Servidor -> Cliente (crafting completo)
+        CraftCancel = 28,          // Cliente -> Servidor (cancela crafting)
+        CraftQueueUpdate = 29      // Servidor -> Cliente (atualiza fila de crafting)
     }
 
     // Classe base para serialização de pacotes
@@ -73,7 +81,8 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de requisição de conexão
+    // ==================== PACOTES EXISTENTES ====================
+
     public class ConnectionRequestPacket
     {
         public string PlayerName { get; set; }
@@ -92,7 +101,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de aceitação de conexão
     public class ConnectionAcceptPacket
     {
         public int PlayerId { get; set; }
@@ -122,7 +130,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de movimento do jogador
     public class PlayerMovementPacket
     {
         public int PlayerId { get; set; }
@@ -158,7 +165,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de spawn de jogador
     public class PlayerSpawnPacket
     {
         public int PlayerId { get; set; }
@@ -194,7 +200,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de atualização de stats
     public class StatsUpdatePacket
     {
         public int PlayerId { get; set; }
@@ -227,7 +232,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de morte de jogador
     public class PlayerDeathPacket
     {
         public int PlayerId { get; set; }
@@ -254,7 +258,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de atualização de inventário
     public class InventoryUpdatePacket
     {
         public List<InventorySlotData> Slots { get; set; }
@@ -315,7 +318,6 @@ namespace RustlikeServer.Network
         public int Quantity { get; set; }
     }
 
-    // Pacote de uso de item
     public class ItemUsePacket
     {
         public int SlotIndex { get; set; }
@@ -334,7 +336,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // Pacote de mover item
     public class ItemMovePacket
     {
         public int FromSlot { get; set; }
@@ -358,7 +359,8 @@ namespace RustlikeServer.Network
         }
     }
 
-    // ⭐ NOVO: Pacote de sincronização de recursos
+    // ==================== PACOTES DE RECURSOS ====================
+
     public class ResourcesSyncPacket
     {
         public List<ResourceData> Resources { get; set; }
@@ -417,7 +419,7 @@ namespace RustlikeServer.Network
     public class ResourceData
     {
         public int Id { get; set; }
-        public byte Type { get; set; } // 0=Tree, 1=Stone, 2=Metal, 3=Sulfur
+        public byte Type { get; set; }
         public float PosX { get; set; }
         public float PosY { get; set; }
         public float PosZ { get; set; }
@@ -425,12 +427,11 @@ namespace RustlikeServer.Network
         public float MaxHealth { get; set; }
     }
 
-    // ⭐ NOVO: Pacote de hit em recurso
     public class ResourceHitPacket
     {
         public int ResourceId { get; set; }
         public float Damage { get; set; }
-        public int ToolType { get; set; } // 0=Mão, 1=Machado, 2=Picareta
+        public int ToolType { get; set; }
 
         public byte[] Serialize()
         {
@@ -452,7 +453,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // ⭐ NOVO: Pacote de atualização de recurso
     public class ResourceUpdatePacket
     {
         public int ResourceId { get; set; }
@@ -479,7 +479,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // ⭐ NOVO: Pacote de recurso destruído
     public class ResourceDestroyedPacket
     {
         public int ResourceId { get; set; }
@@ -498,7 +497,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // ⭐ NOVO: Pacote de respawn de recurso
     public class ResourceRespawnPacket
     {
         public int ResourceId { get; set; }
@@ -525,7 +523,6 @@ namespace RustlikeServer.Network
         }
     }
 
-    // ⭐ NOVO: Pacote de resultado de coleta
     public class GatherResultPacket
     {
         public int WoodGained { get; set; }
@@ -553,5 +550,298 @@ namespace RustlikeServer.Network
                 SulfurGained = BitConverter.ToInt32(data, 12)
             };
         }
+    }
+
+    // ==================== ⭐ NOVOS PACOTES DE CRAFTING ====================
+
+    /// <summary>
+    /// Envia todas as receitas para o cliente
+    /// </summary>
+    public class RecipesSyncPacket
+    {
+        public List<RecipeData> Recipes { get; set; }
+
+        public RecipesSyncPacket()
+        {
+            Recipes = new List<RecipeData>();
+        }
+
+        public byte[] Serialize()
+        {
+            List<byte> data = new List<byte>();
+            data.AddRange(BitConverter.GetBytes(Recipes.Count));
+
+            foreach (var recipe in Recipes)
+            {
+                // Recipe ID
+                data.AddRange(BitConverter.GetBytes(recipe.Id));
+                
+                // Recipe Name
+                byte[] nameBytes = Encoding.UTF8.GetBytes(recipe.Name);
+                data.AddRange(BitConverter.GetBytes(nameBytes.Length));
+                data.AddRange(nameBytes);
+                
+                // Result Item
+                data.AddRange(BitConverter.GetBytes(recipe.ResultItemId));
+                data.AddRange(BitConverter.GetBytes(recipe.ResultQuantity));
+                
+                // Crafting Time
+                data.AddRange(BitConverter.GetBytes(recipe.CraftingTime));
+                
+                // Required Workbench
+                data.AddRange(BitConverter.GetBytes(recipe.RequiredWorkbench));
+                
+                // Ingredients
+                data.AddRange(BitConverter.GetBytes(recipe.Ingredients.Count));
+                foreach (var ingredient in recipe.Ingredients)
+                {
+                    data.AddRange(BitConverter.GetBytes(ingredient.ItemId));
+                    data.AddRange(BitConverter.GetBytes(ingredient.Quantity));
+                }
+            }
+
+            return data.ToArray();
+        }
+
+        public static RecipesSyncPacket Deserialize(byte[] data)
+        {
+            var packet = new RecipesSyncPacket();
+            int offset = 0;
+
+            int recipeCount = BitConverter.ToInt32(data, offset);
+            offset += 4;
+
+            for (int i = 0; i < recipeCount; i++)
+            {
+                var recipe = new RecipeData();
+                
+                recipe.Id = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                int nameLength = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                recipe.Name = Encoding.UTF8.GetString(data, offset, nameLength);
+                offset += nameLength;
+                
+                recipe.ResultItemId = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                recipe.ResultQuantity = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                recipe.CraftingTime = BitConverter.ToSingle(data, offset);
+                offset += 4;
+                
+                recipe.RequiredWorkbench = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                int ingredientCount = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                for (int j = 0; j < ingredientCount; j++)
+                {
+                    int itemId = BitConverter.ToInt32(data, offset);
+                    offset += 4;
+                    int quantity = BitConverter.ToInt32(data, offset);
+                    offset += 4;
+                    
+                    recipe.Ingredients.Add(new IngredientData
+                    {
+                        ItemId = itemId,
+                        Quantity = quantity
+                    });
+                }
+                
+                packet.Recipes.Add(recipe);
+            }
+
+            return packet;
+        }
+    }
+
+    public class RecipeData
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public int ResultItemId { get; set; }
+        public int ResultQuantity { get; set; }
+        public float CraftingTime { get; set; }
+        public int RequiredWorkbench { get; set; }
+        public List<IngredientData> Ingredients { get; set; }
+
+        public RecipeData()
+        {
+            Ingredients = new List<IngredientData>();
+        }
+    }
+
+    public class IngredientData
+    {
+        public int ItemId { get; set; }
+        public int Quantity { get; set; }
+    }
+
+    /// <summary>
+    /// Cliente solicita crafting de uma receita
+    /// </summary>
+    public class CraftRequestPacket
+    {
+        public int RecipeId { get; set; }
+
+        public byte[] Serialize()
+        {
+            return BitConverter.GetBytes(RecipeId);
+        }
+
+        public static CraftRequestPacket Deserialize(byte[] data)
+        {
+            return new CraftRequestPacket
+            {
+                RecipeId = BitConverter.ToInt32(data, 0)
+            };
+        }
+    }
+
+    /// <summary>
+    /// Servidor confirma início do crafting
+    /// </summary>
+    public class CraftStartedPacket
+    {
+        public int RecipeId { get; set; }
+        public float Duration { get; set; }
+        public bool Success { get; set; }
+        public string Message { get; set; }
+
+        public byte[] Serialize()
+        {
+            byte[] messageBytes = Encoding.UTF8.GetBytes(Message ?? "");
+            byte[] data = new byte[13 + messageBytes.Length];
+            
+            BitConverter.GetBytes(RecipeId).CopyTo(data, 0);
+            BitConverter.GetBytes(Duration).CopyTo(data, 4);
+            data[8] = Success ? (byte)1 : (byte)0;
+            BitConverter.GetBytes(messageBytes.Length).CopyTo(data, 9);
+            messageBytes.CopyTo(data, 13);
+            
+            return data;
+        }
+
+        public static CraftStartedPacket Deserialize(byte[] data)
+        {
+            int messageLength = BitConverter.ToInt32(data, 9);
+            return new CraftStartedPacket
+            {
+                RecipeId = BitConverter.ToInt32(data, 0),
+                Duration = BitConverter.ToSingle(data, 4),
+                Success = data[8] == 1,
+                Message = messageLength > 0 ? Encoding.UTF8.GetString(data, 13, messageLength) : ""
+            };
+        }
+    }
+
+    /// <summary>
+    /// Servidor notifica que crafting foi completo
+    /// </summary>
+    public class CraftCompletePacket
+    {
+        public int RecipeId { get; set; }
+        public int ResultItemId { get; set; }
+        public int ResultQuantity { get; set; }
+
+        public byte[] Serialize()
+        {
+            byte[] data = new byte[12];
+            BitConverter.GetBytes(RecipeId).CopyTo(data, 0);
+            BitConverter.GetBytes(ResultItemId).CopyTo(data, 4);
+            BitConverter.GetBytes(ResultQuantity).CopyTo(data, 8);
+            return data;
+        }
+
+        public static CraftCompletePacket Deserialize(byte[] data)
+        {
+            return new CraftCompletePacket
+            {
+                RecipeId = BitConverter.ToInt32(data, 0),
+                ResultItemId = BitConverter.ToInt32(data, 4),
+                ResultQuantity = BitConverter.ToInt32(data, 8)
+            };
+        }
+    }
+
+    /// <summary>
+    /// Cliente solicita cancelamento de crafting
+    /// </summary>
+    public class CraftCancelPacket
+    {
+        public int QueueIndex { get; set; }
+
+        public byte[] Serialize()
+        {
+            return BitConverter.GetBytes(QueueIndex);
+        }
+
+        public static CraftCancelPacket Deserialize(byte[] data)
+        {
+            return new CraftCancelPacket
+            {
+                QueueIndex = BitConverter.ToInt32(data, 0)
+            };
+        }
+    }
+
+    /// <summary>
+    /// Servidor envia atualização da fila de crafting
+    /// </summary>
+    public class CraftQueueUpdatePacket
+    {
+        public List<CraftQueueItem> QueueItems { get; set; }
+
+        public CraftQueueUpdatePacket()
+        {
+            QueueItems = new List<CraftQueueItem>();
+        }
+
+        public byte[] Serialize()
+        {
+            List<byte> data = new List<byte>();
+            data.AddRange(BitConverter.GetBytes(QueueItems.Count));
+
+            foreach (var item in QueueItems)
+            {
+                data.AddRange(BitConverter.GetBytes(item.RecipeId));
+                data.AddRange(BitConverter.GetBytes(item.Progress));
+                data.AddRange(BitConverter.GetBytes(item.RemainingTime));
+            }
+
+            return data.ToArray();
+        }
+
+        public static CraftQueueUpdatePacket Deserialize(byte[] data)
+        {
+            var packet = new CraftQueueUpdatePacket();
+            int offset = 0;
+
+            int count = BitConverter.ToInt32(data, offset);
+            offset += 4;
+
+            for (int i = 0; i < count; i++)
+            {
+                packet.QueueItems.Add(new CraftQueueItem
+                {
+                    RecipeId = BitConverter.ToInt32(data, offset),
+                    Progress = BitConverter.ToSingle(data, offset + 4),
+                    RemainingTime = BitConverter.ToSingle(data, offset + 8)
+                });
+                offset += 12;
+            }
+
+            return packet;
+        }
+    }
+
+    public class CraftQueueItem
+    {
+        public int RecipeId { get; set; }
+        public float Progress { get; set; }       // 0.0 a 1.0
+        public float RemainingTime { get; set; }  // Em segundos
     }
 }
