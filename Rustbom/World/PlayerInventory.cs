@@ -6,12 +6,12 @@ using RustlikeServer.Items;
 namespace RustlikeServer.World
 {
     /// <summary>
-    /// Inventário do jogador (Server Authoritative)
+    /// ⭐ ATUALIZADO: Adicionado GetSlot público para validação
     /// </summary>
     public class PlayerInventory
     {
-        private const int INVENTORY_SIZE = 24;  // Inventário principal
-        private const int HOTBAR_SIZE = 6;      // Hotbar (slots 0-5)
+        private const int INVENTORY_SIZE = 24;
+        private const int HOTBAR_SIZE = 6;
 
         private ItemStack[] _slots;
         private int _selectedHotbarSlot = 0;
@@ -20,15 +20,12 @@ namespace RustlikeServer.World
         {
             _slots = new ItemStack[INVENTORY_SIZE];
             
-            // ⭐ DEBUG: Inicializa com alguns itens para teste
+            // Debug: Inicializa com alguns itens para teste
             AddItemDebug(1, 5);   // 5 Apples
             AddItemDebug(4, 3);   // 3 Water Bottles
             AddItemDebug(6, 10);  // 10 Bandages
         }
 
-        /// <summary>
-        /// Adiciona item ao inventário (encontra primeiro slot vazio ou stack)
-        /// </summary>
         public bool AddItem(int itemId, int quantity = 1)
         {
             var itemDef = ItemDatabase.GetItem(itemId);
@@ -40,7 +37,6 @@ namespace RustlikeServer.World
 
             int remaining = quantity;
 
-            // Primeiro: tenta empilhar em stacks existentes
             for (int i = 0; i < INVENTORY_SIZE && remaining > 0; i++)
             {
                 if (_slots[i] != null && _slots[i].ItemId == itemId)
@@ -49,7 +45,6 @@ namespace RustlikeServer.World
                 }
             }
 
-            // Segundo: cria novas stacks em slots vazios
             for (int i = 0; i < INVENTORY_SIZE && remaining > 0; i++)
             {
                 if (_slots[i] == null)
@@ -70,9 +65,6 @@ namespace RustlikeServer.World
             return true;
         }
 
-        /// <summary>
-        /// Remove item do inventário
-        /// </summary>
         public bool RemoveItem(int itemId, int quantity = 1)
         {
             int remaining = quantity;
@@ -95,9 +87,6 @@ namespace RustlikeServer.World
             return remaining == 0;
         }
 
-        /// <summary>
-        /// Consome item (come, bebe, usa remédio)
-        /// </summary>
         public ItemDefinition ConsumeItem(int slotIndex)
         {
             if (slotIndex < 0 || slotIndex >= INVENTORY_SIZE)
@@ -109,7 +98,6 @@ namespace RustlikeServer.World
 
             var itemDef = stack.Definition;
 
-            // Remove 1 unidade
             stack.Remove(1);
             if (stack.IsEmpty())
             {
@@ -121,8 +109,16 @@ namespace RustlikeServer.World
         }
 
         /// <summary>
-        /// Move item entre slots (drag & drop)
+        /// ⭐ NOVO: Pega ItemStack de um slot (sem consumir) para validação
         /// </summary>
+        public ItemStack GetSlot(int slotIndex)
+        {
+            if (slotIndex < 0 || slotIndex >= INVENTORY_SIZE)
+                return null;
+
+            return _slots[slotIndex];
+        }
+
         public bool MoveItem(int fromSlot, int toSlot)
         {
             if (fromSlot < 0 || fromSlot >= INVENTORY_SIZE) return false;
@@ -134,7 +130,6 @@ namespace RustlikeServer.World
 
             if (fromStack == null) return false;
 
-            // Slot destino vazio: move tudo
             if (toStack == null)
             {
                 _slots[toSlot] = fromStack;
@@ -142,7 +137,6 @@ namespace RustlikeServer.World
                 return true;
             }
 
-            // Mesmo item: tenta empilhar
             if (fromStack.ItemId == toStack.ItemId)
             {
                 int remaining = toStack.Add(fromStack.Quantity);
@@ -157,15 +151,11 @@ namespace RustlikeServer.World
                 return true;
             }
 
-            // Itens diferentes: troca
             _slots[fromSlot] = toStack;
             _slots[toSlot] = fromStack;
             return true;
         }
 
-        /// <summary>
-        /// Verifica se tem item
-        /// </summary>
         public bool HasItem(int itemId, int quantity = 1)
         {
             int count = 0;
@@ -180,9 +170,6 @@ namespace RustlikeServer.World
             return false;
         }
 
-        /// <summary>
-        /// Conta quantidade de um item
-        /// </summary>
         public int CountItem(int itemId)
         {
             int count = 0;
@@ -196,9 +183,6 @@ namespace RustlikeServer.World
             return count;
         }
 
-        /// <summary>
-        /// Seleciona slot da hotbar (1-6)
-        /// </summary>
         public void SelectHotbarSlot(int index)
         {
             if (index >= 0 && index < HOTBAR_SIZE)
@@ -209,22 +193,13 @@ namespace RustlikeServer.World
 
         public int GetSelectedHotbarSlot() => _selectedHotbarSlot;
 
-        /// <summary>
-        /// Pega item do slot selecionado da hotbar
-        /// </summary>
         public ItemStack GetSelectedItem()
         {
             return _slots[_selectedHotbarSlot];
         }
 
-        /// <summary>
-        /// Pega todos os slots (para sincronização)
-        /// </summary>
         public ItemStack[] GetAllSlots() => _slots;
 
-        /// <summary>
-        /// Limpa inventário
-        /// </summary>
         public void Clear()
         {
             for (int i = 0; i < INVENTORY_SIZE; i++)
@@ -233,9 +208,6 @@ namespace RustlikeServer.World
             }
         }
 
-        /// <summary>
-        /// DEBUG: Adiciona item sem logs
-        /// </summary>
         private void AddItemDebug(int itemId, int quantity)
         {
             var itemDef = ItemDatabase.GetItem(itemId);
@@ -253,9 +225,6 @@ namespace RustlikeServer.World
             }
         }
 
-        /// <summary>
-        /// Para debug
-        /// </summary>
         public override string ToString()
         {
             int usedSlots = _slots.Count(s => s != null);
