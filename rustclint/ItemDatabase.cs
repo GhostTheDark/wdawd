@@ -91,6 +91,7 @@ namespace RustlikeClient.Items
             items.Add(CreateItem(100, "Wood", "Madeira. Material de construção básico.", 1000, false));
             items.Add(CreateItem(101, "Stone", "Pedra. Mais resistente que madeira.", 1000, false));
             items.Add(CreateItem(102, "Metal Ore", "Minério de metal. Muito valioso.", 500, false));
+			items.Add(CreateItem(103, "Sulfur Ore", "Minério de enxofre. Usado em explosivos.", 500, false));
 
             Debug.Log($"[ItemDatabase] {items.Count} itens padrão criados");
         }

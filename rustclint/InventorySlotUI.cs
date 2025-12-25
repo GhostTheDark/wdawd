@@ -6,9 +6,10 @@ using TMPro;
 namespace RustlikeClient.UI
 {
     /// <summary>
-    /// Slot individual do inventário com drag & drop
+    /// ⭐ VERSÃO V2 - DRAG & DROP 100% FUNCIONAL
+    /// SOLUÇÃO: OnDrop processa PRIMEIRO e seta flag, depois OnEndDrag verifica a flag
     /// </summary>
-    public class InventorySlotUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler
+    public class InventorySlotUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler, IDropHandler
     {
         [Header("UI References")]
         public Image itemIcon;
@@ -30,13 +31,23 @@ namespace RustlikeClient.UI
 
         // Drag & drop
         private Canvas _canvas;
+        private CanvasGroup _canvasGroup;
         private GameObject _dragIcon;
-        private Vector3 _originalPosition;
-        private Transform _originalParent;
+        private RectTransform _dragIconRect;
+        
+        // ⭐ SOLUÇÃO: Guarda informação de qual slot está sendo arrastado E se o drop foi processado
+        private static InventorySlotUI _currentlyDragging = null;
+        private static bool _dropProcessed = false; // ⭐ NOVA FLAG
 
         private void Awake()
         {
             _canvas = GetComponentInParent<Canvas>();
+            
+            _canvasGroup = GetComponent<CanvasGroup>();
+            if (_canvasGroup == null)
+            {
+                _canvasGroup = gameObject.AddComponent<CanvasGroup>();
+            }
             
             if (highlightBorder != null)
                 highlightBorder.gameObject.SetActive(false);
@@ -44,9 +55,6 @@ namespace RustlikeClient.UI
             UpdateVisuals();
         }
 
-        /// <summary>
-        /// Define o conteúdo do slot
-        /// </summary>
         public void SetItem(int itemId, int quantity)
         {
             _itemId = itemId;
@@ -65,22 +73,15 @@ namespace RustlikeClient.UI
             UpdateVisuals();
         }
 
-        /// <summary>
-        /// Limpa o slot
-        /// </summary>
         public void Clear()
         {
             SetItem(-1, 0);
         }
 
-        /// <summary>
-        /// Atualiza visual do slot
-        /// </summary>
         private void UpdateVisuals()
         {
             if (_isEmpty || _itemData == null)
             {
-                // Slot vazio
                 if (itemIcon != null)
                 {
                     itemIcon.gameObject.SetActive(false);
@@ -93,13 +94,11 @@ namespace RustlikeClient.UI
             }
             else
             {
-                // Slot com item
                 if (itemIcon != null)
                 {
                     itemIcon.gameObject.SetActive(true);
                     itemIcon.sprite = _itemData.icon;
                     
-                    // Se não tem sprite, mostra cor baseado no ID
                     if (_itemData.icon == null)
                     {
                         itemIcon.color = GetColorForItem(_itemId);
@@ -117,28 +116,22 @@ namespace RustlikeClient.UI
                 }
             }
 
-            // Atualiza cor do background (hotbar vs inventário)
             if (backgroundImage != null)
             {
                 backgroundImage.color = slotIndex < 6 ? hotbarColor : normalColor;
             }
         }
 
-        /// <summary>
-        /// Cor placeholder baseada no tipo de item
-        /// </summary>
         private Color GetColorForItem(int itemId)
         {
-            // Comida = Verde, Água = Azul, Remédio = Vermelho, etc
-            if (itemId <= 3) return new Color(0.4f, 0.8f, 0.2f); // Comida - Verde
-            if (itemId <= 5) return new Color(0.2f, 0.6f, 1f);   // Água - Azul
-            if (itemId <= 8) return new Color(1f, 0.3f, 0.3f);   // Remédio - Vermelho
-            return new Color(1f, 1f, 0.4f);                       // Híbrido - Amarelo
+            if (itemId <= 3) return new Color(0.4f, 0.8f, 0.2f);
+            if (itemId <= 5) return new Color(0.2f, 0.6f, 1f);
+            if (itemId <= 8) return new Color(1f, 0.3f, 0.3f);
+            if (itemId <= 10) return new Color(1f, 1f, 0.4f);
+            if (itemId >= 100) return new Color(0.6f, 0.4f, 0.2f);
+            return Color.white;
         }
 
-        /// <summary>
-        /// Destaca o slot (ao passar mouse)
-        /// </summary>
         public void Highlight(bool enable)
         {
             if (highlightBorder != null)
@@ -156,15 +149,123 @@ namespace RustlikeClient.UI
             }
         }
 
-        // ==================== DRAG & DROP ====================
+        // ==================== DRAG & DROP (V2 CORRIGIDO) ====================
 
         public void OnBeginDrag(PointerEventData eventData)
         {
-            if (_isEmpty) return;
+            if (_isEmpty)
+            {
+                Debug.Log($"[InventorySlot] Slot {slotIndex} está vazio");
+                return;
+            }
 
-            // Cria ícone de drag
+            if (_currentlyDragging != null && _currentlyDragging != this)
+            {
+                Debug.Log("[InventorySlot] Já existe um drag em andamento");
+                return;
+            }
+
+            // ⭐ RESETA a flag de drop processado
+            _dropProcessed = false;
+            _currentlyDragging = this;
+
+            Debug.Log($"[InventorySlot] ⭐ BEGIN DRAG slot {slotIndex} (Item: {_itemId})");
+
+            CreateDragIcon();
+
+            _canvasGroup.alpha = 0.5f;
+            _canvasGroup.blocksRaycasts = false;
+        }
+
+        public void OnDrag(PointerEventData eventData)
+        {
+            if (_dragIcon == null) return;
+
+            Vector2 localPoint;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                _canvas.transform as RectTransform,
+                eventData.position,
+                eventData.pressEventCamera,
+                out localPoint
+            );
+
+            _dragIconRect.localPosition = localPoint;
+        }
+
+        /// <summary>
+        /// ⭐ CRÍTICO: OnDrop é chamado ANTES do OnEndDrag
+        /// Aqui setamos a flag _dropProcessed = true
+        /// </summary>
+        public void OnDrop(PointerEventData eventData)
+        {
+            Debug.Log($"[InventorySlot] ⭐ ON DROP no slot {slotIndex}");
+
+            // Verifica se há algo sendo arrastado
+            if (_currentlyDragging == null)
+            {
+                Debug.Log($"[InventorySlot] ❌ Nenhum slot sendo arrastado (OnDrop)");
+                return;
+            }
+
+            // Não pode dropar no próprio slot
+            if (_currentlyDragging == this)
+            {
+                Debug.Log($"[InventorySlot] ❌ Tentou dropar no próprio slot");
+                return;
+            }
+
+            // ⭐ MOVE O ITEM
+            int fromSlot = _currentlyDragging.slotIndex;
+            int toSlot = this.slotIndex;
+
+            Debug.Log($"[InventorySlot] ✅ Dropou no slot {toSlot}, movendo de {fromSlot} → {toSlot}");
+
+            InventoryManager.Instance?.MoveItem(fromSlot, toSlot);
+
+            // ⭐ SETA A FLAG: Drop foi processado com sucesso!
+            _dropProcessed = true;
+        }
+
+        /// <summary>
+        /// ⭐ OnEndDrag é chamado DEPOIS do OnDrop
+        /// Verifica se _dropProcessed foi setado
+        /// </summary>
+        public void OnEndDrag(PointerEventData eventData)
+        {
+            Debug.Log($"[InventorySlot] ⭐ END DRAG slot {slotIndex}");
+
+            // Limpa o ícone de drag
+            if (_dragIcon != null)
+            {
+                Destroy(_dragIcon);
+                _dragIcon = null;
+            }
+
+            // Restaura visual
+            _canvasGroup.alpha = 1f;
+            _canvasGroup.blocksRaycasts = true;
+
+            // ⭐ VERIFICA SE O DROP FOI PROCESSADO
+            if (_dropProcessed)
+            {
+                Debug.Log($"[InventorySlot] ✅ Drop foi processado com sucesso!");
+            }
+            else
+            {
+                Debug.Log($"[InventorySlot] ❌ Não dropou em slot válido");
+            }
+
+            // Limpa as variáveis estáticas
+            _currentlyDragging = null;
+            _dropProcessed = false;
+        }
+
+        private void CreateDragIcon()
+        {
+            if (_canvas == null || itemIcon == null) return;
+
             _dragIcon = new GameObject("DragIcon");
-            _dragIcon.transform.SetParent(_canvas.transform);
+            _dragIcon.transform.SetParent(_canvas.transform, false);
             _dragIcon.transform.SetAsLastSibling();
 
             Image dragImage = _dragIcon.AddComponent<Image>();
@@ -172,58 +273,15 @@ namespace RustlikeClient.UI
             dragImage.color = itemIcon.color;
             dragImage.raycastTarget = false;
 
-            RectTransform rt = _dragIcon.GetComponent<RectTransform>();
-            rt.sizeDelta = new Vector2(50, 50);
+            _dragIconRect = _dragIcon.GetComponent<RectTransform>();
+            _dragIconRect.sizeDelta = new Vector2(60, 60);
+            _dragIconRect.pivot = new Vector2(0.5f, 0.5f);
 
-            _originalPosition = transform.position;
-            _originalParent = transform.parent;
+            CanvasGroup dragCanvasGroup = _dragIcon.AddComponent<CanvasGroup>();
+            dragCanvasGroup.alpha = 0.8f;
+            dragCanvasGroup.blocksRaycasts = false;
 
-            // Feedback visual
-            if (itemIcon != null)
-            {
-                var color = itemIcon.color;
-                color.a = 0.5f;
-                itemIcon.color = color;
-            }
-        }
-
-        public void OnDrag(PointerEventData eventData)
-        {
-            if (_dragIcon != null)
-            {
-                _dragIcon.transform.position = Input.mousePosition;
-            }
-        }
-
-        public void OnEndDrag(PointerEventData eventData)
-        {
-            if (_dragIcon != null)
-            {
-                Destroy(_dragIcon);
-            }
-
-            // Restaura alpha
-            if (itemIcon != null)
-            {
-                var color = itemIcon.color;
-                color.a = 1f;
-                itemIcon.color = color;
-            }
-
-            // Verifica se dropou em outro slot
-            var results = new System.Collections.Generic.List<RaycastResult>();
-            EventSystem.current.RaycastAll(eventData, results);
-
-            foreach (var result in results)
-            {
-                var targetSlot = result.gameObject.GetComponent<InventorySlotUI>();
-                if (targetSlot != null && targetSlot != this)
-                {
-                    // Move item
-                    InventoryManager.Instance?.MoveItem(slotIndex, targetSlot.slotIndex);
-                    return;
-                }
-            }
+            Debug.Log("[InventorySlot] ✅ Ícone de drag criado");
         }
 
         // ==================== MOUSE EVENTS ====================
@@ -232,19 +290,21 @@ namespace RustlikeClient.UI
         {
             if (_isEmpty) return;
 
-            // Right click = Usar item
             if (eventData.button == PointerEventData.InputButton.Right)
             {
+                Debug.Log($"[InventorySlot] 🖱️ Right click no slot {slotIndex}");
                 InventoryManager.Instance?.UseItem(slotIndex);
             }
         }
 
         public void OnPointerEnter(PointerEventData eventData)
         {
-            Highlight(true);
+            if (_currentlyDragging == null)
+            {
+                Highlight(true);
+            }
 
-            // Mostra tooltip
-            if (!_isEmpty && _itemData != null)
+            if (!_isEmpty && _itemData != null && _currentlyDragging == null)
             {
                 TooltipUI.Instance?.Show(_itemData.itemName, _itemData.description, Input.mousePosition);
             }
@@ -252,7 +312,11 @@ namespace RustlikeClient.UI
 
         public void OnPointerExit(PointerEventData eventData)
         {
-            Highlight(false);
+            if (_currentlyDragging == null)
+            {
+                Highlight(false);
+            }
+            
             TooltipUI.Instance?.Hide();
         }
 
