@@ -1,22 +1,63 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace RustlikeClient.Items
 {
     /// <summary>
-    /// Database local de itens (sincronizado com servidor)
-    /// ⭐ MELHORADO: Inicialização automática de itens padrão
+    /// ⭐ ATUALIZADO: Item data com suporte JSON
+    /// </summary>
+    [Serializable]
+    public class ItemData
+    {
+        public int id;
+        public string itemName;
+        public string description;
+        public string type;
+        public int maxStack;
+        public bool isConsumable;
+        public string consumableType;
+        public float healthRestore;
+        public float hungerRestore;
+        public float thirstRestore;
+        
+        // Não vem do JSON - configurado no Unity
+        [NonSerialized]
+        public Sprite icon;
+    }
+
+    /// <summary>
+    /// ⭐ NOVO: Estrutura do JSON (mesmo do servidor)
+    /// </summary>
+    [Serializable]
+    public class ItemsDatabase
+    {
+        public List<ItemData> items;
+    }
+
+    /// <summary>
+    /// ⭐ ATUALIZADO: Database local de itens carregado de JSON
     /// </summary>
     public class ItemDatabase : MonoBehaviour
     {
         public static ItemDatabase Instance { get; private set; }
 
+        [Header("JSON Source")]
+        [Tooltip("Arquivo items.json (deve estar em StreamingAssets)")]
+        public string itemsJsonFileName = "items.json";
+
         [Header("Item Icons")]
-        public List<ItemData> items = new List<ItemData>();
+        [Tooltip("Arraste aqui os sprites dos ícones (configure IDs manualmente)")]
+        public List<ItemIconMapping> itemIcons = new List<ItemIconMapping>();
 
         [Header("Auto Setup")]
-        [Tooltip("Se true, cria itens padrão caso a lista esteja vazia")]
-        public bool autoCreateDefaultItems = true;
+        [Tooltip("Se true, tenta carregar do JSON automaticamente")]
+        public bool autoLoadFromJson = true;
+
+        [Header("Fallback")]
+        [Tooltip("Se true e JSON não existir, cria itens padrão")]
+        public bool createDefaultIfMissing = true;
 
         private Dictionary<int, ItemData> _itemDict;
 
@@ -31,23 +72,181 @@ namespace RustlikeClient.Items
             Instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // ⭐ NOVO: Cria itens padrão automaticamente se necessário
-            if (autoCreateDefaultItems && items.Count == 0)
+            LoadItemsFromJson();
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Carrega itens do JSON
+        /// </summary>
+        private void LoadItemsFromJson()
+        {
+            _itemDict = new Dictionary<int, ItemData>();
+
+            if (!autoLoadFromJson)
             {
-                CreateDefaultItems();
+                Debug.LogWarning("[ItemDatabase] Auto-load desabilitado");
+                return;
             }
 
-            // Cria dictionary para acesso rápido
-            _itemDict = new Dictionary<int, ItemData>();
-            foreach (var item in items)
+            string jsonPath = Path.Combine(Application.streamingAssetsPath, itemsJsonFileName);
+
+            // Se não existir no StreamingAssets, tenta na raiz do projeto
+            if (!File.Exists(jsonPath))
             {
-                if (item != null && item.id > 0)
+                jsonPath = Path.Combine(Application.dataPath, "..", itemsJsonFileName);
+            }
+
+            if (!File.Exists(jsonPath))
+            {
+                Debug.LogWarning($"[ItemDatabase] ⚠️ Arquivo {itemsJsonFileName} não encontrado!");
+                
+                if (createDefaultIfMissing)
                 {
-                    _itemDict[item.id] = item;
+                    Debug.Log("[ItemDatabase] Criando itens padrão...");
+                    CreateDefaultItems();
+                }
+                return;
+            }
+
+            try
+            {
+                Debug.Log($"[ItemDatabase] Carregando itens de: {jsonPath}");
+                
+                string json = File.ReadAllText(jsonPath);
+                ItemsDatabase database = JsonUtility.FromJson<ItemsDatabase>(json);
+
+                if (database?.items != null)
+                {
+                    foreach (var item in database.items)
+                    {
+                        // Mapeia ícone se existir
+                        item.icon = GetIconForItem(item.id);
+                        
+                        _itemDict[item.id] = item;
+                    }
+
+                    Debug.Log($"[ItemDatabase] ✅ {_itemDict.Count} itens carregados do JSON");
+                    LogLoadedItems();
+                }
+                else
+                {
+                    Debug.LogError("[ItemDatabase] ❌ JSON inválido ou vazio!");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ItemDatabase] ❌ Erro ao carregar JSON: {ex.Message}");
+                
+                if (createDefaultIfMissing)
+                {
+                    CreateDefaultItems();
+                }
+            }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Pega ícone mapeado para um item
+        /// </summary>
+        private Sprite GetIconForItem(int itemId)
+        {
+            foreach (var mapping in itemIcons)
+            {
+                if (mapping.itemId == itemId)
+                {
+                    return mapping.icon;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Log dos itens carregados
+        /// </summary>
+        private void LogLoadedItems()
+        {
+            int consumables = 0;
+            int resources = 0;
+            int tools = 0;
+            int buildings = 0;
+
+            foreach (var item in _itemDict.Values)
+            {
+                switch (item.type)
+                {
+                    case "Consumable": consumables++; break;
+                    case "Resource": resources++; break;
+                    case "Tool": tools++; break;
+                    case "Building": buildings++; break;
                 }
             }
 
-            Debug.Log($"[ItemDatabase] {items.Count} itens carregados");
+            Debug.Log("========== ITENS CARREGADOS (CLIENTE) ==========");
+            Debug.Log($"Consumíveis: {consumables}");
+            Debug.Log($"Recursos: {resources}");
+            Debug.Log($"Ferramentas: {tools}");
+            Debug.Log($"Construção: {buildings}");
+            Debug.Log($"TOTAL: {_itemDict.Count}");
+            Debug.Log("===============================================");
+        }
+
+        /// <summary>
+        /// Cria itens placeholder (fallback)
+        /// </summary>
+        private void CreateDefaultItems()
+        {
+            Debug.Log("[ItemDatabase] Criando itens padrão (hardcoded)...");
+
+            var defaultItems = new List<ItemData>
+            {
+                // Consumíveis - Comida
+                CreateItem(1, "Apple", "Uma maçã fresca. Restaura fome.", "Consumable", 10, true, "Food", 0, 20, 5),
+                CreateItem(2, "Cooked Meat", "Carne cozida. Muito nutritivo.", "Consumable", 20, true, "Food", 0, 50, 0),
+                CreateItem(3, "Chocolate Bar", "Barra de chocolate. Energia rápida.", "Consumable", 10, true, "Food", 0, 30, 10),
+
+                // Consumíveis - Água
+                CreateItem(4, "Water Bottle", "Garrafa de água. Mata a sede.", "Consumable", 5, true, "Water", 0, 0, 50),
+                CreateItem(5, "Soda Can", "Refrigerante. Hidrata e energiza.", "Consumable", 10, true, "Water", 0, 10, 40),
+
+                // Consumíveis - Remédios
+                CreateItem(6, "Bandage", "Bandagem. Restaura 20 HP.", "Consumable", 10, true, "Medicine", 20, 0, 0),
+                CreateItem(7, "Medical Syringe", "Seringa médica. Restaura 50 HP.", "Consumable", 5, true, "Medicine", 50, 0, 0),
+                CreateItem(8, "Large Medkit", "Kit médico grande. Full heal.", "Consumable", 3, true, "Medicine", 100, 0, 0),
+
+                // Consumíveis - Híbridos
+                CreateItem(9, "Survival Ration", "Ração de sobrevivência. Restaura tudo um pouco.", "Consumable", 5, true, "Hybrid", 10, 30, 30),
+                CreateItem(10, "Energy Drink", "Bebida energética. Boost completo!", "Consumable", 5, true, "Hybrid", 20, 40, 60),
+
+                // Recursos
+                CreateItem(100, "Wood", "Madeira. Material de construção básico.", "Resource", 1000, false, "None", 0, 0, 0),
+                CreateItem(101, "Stone", "Pedra. Mais resistente que madeira.", "Resource", 1000, false, "None", 0, 0, 0),
+                CreateItem(102, "Metal Ore", "Minério de metal. Muito valioso.", "Resource", 500, false, "None", 0, 0, 0),
+                CreateItem(103, "Sulfur Ore", "Minério de enxofre. Usado em explosivos.", "Resource", 500, false, "None", 0, 0, 0),
+            };
+
+            foreach (var item in defaultItems)
+            {
+                _itemDict[item.id] = item;
+            }
+
+            Debug.Log($"[ItemDatabase] {defaultItems.Count} itens padrão criados");
+        }
+
+        private ItemData CreateItem(int id, string name, string desc, string type, int maxStack, bool consumable, string consumableType, float health, float hunger, float thirst)
+        {
+            return new ItemData
+            {
+                id = id,
+                itemName = name,
+                description = desc,
+                type = type,
+                maxStack = maxStack,
+                isConsumable = consumable,
+                consumableType = consumableType,
+                healthRestore = health,
+                hungerRestore = hunger,
+                thirstRestore = thirst,
+                icon = null
+            };
         }
 
         public ItemData GetItem(int itemId)
@@ -55,93 +254,71 @@ namespace RustlikeClient.Items
             return _itemDict.TryGetValue(itemId, out var item) ? item : null;
         }
 
-        /// <summary>
-        /// Cria itens placeholder sem precisar de sprites
-        /// ⭐ MELHORADO: Agora é chamado automaticamente
-        /// </summary>
-        public void CreateDefaultItems()
-        {
-            if (items.Count > 0)
-            {
-                Debug.LogWarning("[ItemDatabase] Já existem itens configurados, pulando criação automática");
-                return;
-            }
-
-            Debug.Log("[ItemDatabase] Criando itens padrão...");
-
-            // === CONSUMÍVEIS - COMIDA ===
-            items.Add(CreateItem(1, "Apple", "Uma maçã fresca. Restaura fome.", 10, true));
-            items.Add(CreateItem(2, "Cooked Meat", "Carne cozida. Muito nutritivo.", 20, true));
-            items.Add(CreateItem(3, "Chocolate Bar", "Barra de chocolate. Energia rápida.", 10, true));
-
-            // === CONSUMÍVEIS - ÁGUA ===
-            items.Add(CreateItem(4, "Water Bottle", "Garrafa de água. Mata a sede.", 5, true));
-            items.Add(CreateItem(5, "Soda Can", "Refrigerante. Hidrata e energiza.", 10, true));
-
-            // === CONSUMÍVEIS - REMÉDIOS ===
-            items.Add(CreateItem(6, "Bandage", "Bandagem. Restaura 20 HP.", 10, true));
-            items.Add(CreateItem(7, "Medical Syringe", "Seringa médica. Restaura 50 HP.", 5, true));
-            items.Add(CreateItem(8, "Large Medkit", "Kit médico grande. Full heal.", 3, true));
-
-            // === CONSUMÍVEIS - HÍBRIDOS ===
-            items.Add(CreateItem(9, "Survival Ration", "Ração de sobrevivência. Restaura tudo um pouco.", 5, true));
-            items.Add(CreateItem(10, "Energy Drink", "Bebida energética. Boost completo!", 5, true));
-
-            // === RECURSOS (para depois) ===
-            items.Add(CreateItem(100, "Wood", "Madeira. Material de construção básico.", 1000, false));
-            items.Add(CreateItem(101, "Stone", "Pedra. Mais resistente que madeira.", 1000, false));
-            items.Add(CreateItem(102, "Metal Ore", "Minério de metal. Muito valioso.", 500, false));
-			items.Add(CreateItem(103, "Sulfur Ore", "Minério de enxofre. Usado em explosivos.", 500, false));
-
-            Debug.Log($"[ItemDatabase] {items.Count} itens padrão criados");
-        }
-
-        private ItemData CreateItem(int id, string name, string desc, int maxStack, bool consumable)
-        {
-            var item = new ItemData
-            {
-                id = id,
-                itemName = name,
-                description = desc,
-                maxStack = maxStack,
-                isConsumable = consumable,
-                icon = null // Será configurado depois no Inspector
-            };
-
-            _itemDict[id] = item;
-            return item;
-        }
-
-        /// <summary>
-        /// ⭐ NOVO: Valida se todos os itens do servidor existem localmente
-        /// </summary>
         public bool ValidateItem(int itemId)
         {
             bool exists = _itemDict.ContainsKey(itemId);
             if (!exists)
             {
-                Debug.LogWarning($"[ItemDatabase] Item ID {itemId} não encontrado no database local!");
+                Debug.LogWarning($"[ItemDatabase] Item ID {itemId} não encontrado!");
             }
             return exists;
         }
 
         /// <summary>
-        /// ⭐ NOVO: Recarrega o database (útil para hot-reload)
+        /// ⭐ NOVO: Recarrega database (útil para hot-reload)
         /// </summary>
         [ContextMenu("Reload Database")]
         public void ReloadDatabase()
         {
             _itemDict.Clear();
+            LoadItemsFromJson();
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Cria arquivo JSON de exemplo no StreamingAssets
+        /// </summary>
+        [ContextMenu("Create Example JSON in StreamingAssets")]
+        public void CreateExampleJson()
+        {
+            string streamingPath = Application.streamingAssetsPath;
             
-            foreach (var item in items)
+            if (!Directory.Exists(streamingPath))
             {
-                if (item != null && item.id > 0)
-                {
-                    _itemDict[item.id] = item;
-                }
+                Directory.CreateDirectory(streamingPath);
             }
 
-            Debug.Log($"[ItemDatabase] Database recarregado: {_itemDict.Count} itens");
+            string jsonPath = Path.Combine(streamingPath, itemsJsonFileName);
+
+            if (File.Exists(jsonPath))
+            {
+                Debug.LogWarning($"[ItemDatabase] Arquivo {itemsJsonFileName} já existe!");
+                return;
+            }
+
+            // Cria estrutura de exemplo
+            var exampleDatabase = new ItemsDatabase
+            {
+                items = new List<ItemData>
+                {
+                    CreateItem(1, "Apple", "Uma maçã fresca", "Consumable", 10, true, "Food", 0, 20, 5),
+                    CreateItem(100, "Wood", "Madeira", "Resource", 1000, false, "None", 0, 0, 0),
+                }
+            };
+
+            string json = JsonUtility.ToJson(exampleDatabase, true);
+            File.WriteAllText(jsonPath, json);
+
+            Debug.Log($"[ItemDatabase] ✅ Arquivo de exemplo criado em: {jsonPath}");
         }
+    }
+
+    /// <summary>
+    /// ⭐ NOVO: Mapeamento de item ID -> Sprite (configurável no Inspector)
+    /// </summary>
+    [Serializable]
+    public class ItemIconMapping
+    {
+        public int itemId;
+        public Sprite icon;
     }
 }
