@@ -154,6 +154,22 @@ namespace RustlikeClient.Network
                 default:
                     Debug.LogWarning($"[NetworkManager] Tipo de pacote desconhecido: {packet.Type}");
                     break;
+					
+				case PacketType.RecipesSync:
+					HandleRecipesSync(packet.Data);
+					break;
+				
+				case PacketType.CraftStarted:
+					HandleCraftStarted(packet.Data);
+					break;
+				
+				case PacketType.CraftComplete:
+					HandleCraftComplete(packet.Data);
+					break;
+				
+				case PacketType.CraftQueueUpdate:
+					HandleCraftQueueUpdate(packet.Data);
+					break;
             }
         }
 
@@ -611,5 +627,121 @@ namespace RustlikeClient.Network
                 Debug.Log("========================================");
             }
         }
+    
+/// <summary>
+/// ⭐ NOVO: Handle de sincronização de receitas
+/// </summary>
+private void HandleRecipesSync(byte[] data)
+{
+    Debug.Log("[NetworkManager] ========== RECIPES SYNC ==========");
+    
+    var packet = RecipesSyncPacket.Deserialize(data);
+    Debug.Log($"[NetworkManager] Recebido {packet.Recipes.Count} receitas do servidor");
+
+    // Converte para formato do cliente
+    var recipes = new List<Crafting.CraftingRecipeData>();
+
+    foreach (var recipeData in packet.Recipes)
+    {
+        var recipe = new Crafting.CraftingRecipeData
+        {
+            id = recipeData.Id,
+            recipeName = recipeData.Name,
+            resultItemId = recipeData.ResultItemId,
+            resultQuantity = recipeData.ResultQuantity,
+            craftingTime = recipeData.CraftingTime,
+            requiredWorkbench = recipeData.RequiredWorkbench
+        };
+
+        foreach (var ingredient in recipeData.Ingredients)
+        {
+            recipe.ingredients.Add(new Crafting.IngredientData
+            {
+                itemId = ingredient.ItemId,
+                quantity = ingredient.Quantity
+            });
+        }
+
+        recipes.Add(recipe);
+    }
+
+    // Envia para CraftingManager
+    if (Crafting.CraftingManager.Instance != null)
+    {
+        Crafting.CraftingManager.Instance.LoadRecipes(recipes);
+        Debug.Log($"[NetworkManager] ✅ {recipes.Count} receitas carregadas no CraftingManager");
+    }
+    else
+    {
+        Debug.LogError("[NetworkManager] CraftingManager não encontrado!");
     }
 }
+
+/// <summary>
+/// ⭐ NOVO: Handle de crafting iniciado
+/// </summary>
+private void HandleCraftStarted(byte[] data)
+{
+    var packet = CraftStartedPacket.Deserialize(data);
+    
+    Debug.Log($"[NetworkManager] Crafting iniciado: Recipe {packet.RecipeId} ({packet.Duration}s) - {(packet.Success ? "SUCCESS" : "FAILED")}");
+
+    if (Crafting.CraftingManager.Instance != null)
+    {
+        Crafting.CraftingManager.Instance.OnCraftStartedResponse(
+            packet.RecipeId,
+            packet.Duration,
+            packet.Success,
+            packet.Message
+        );
+    }
+}
+
+/// <summary>
+/// ⭐ NOVO: Handle de crafting completo
+/// </summary>
+private void HandleCraftComplete(byte[] data)
+{
+    var packet = CraftCompletePacket.Deserialize(data);
+    
+    Debug.Log($"[NetworkManager] ✅ Crafting completo! Recipe {packet.RecipeId} -> {packet.ResultQuantity}x Item {packet.ResultItemId}");
+
+    if (Crafting.CraftingManager.Instance != null)
+    {
+        Crafting.CraftingManager.Instance.OnCraftCompleted(
+            packet.RecipeId,
+            packet.ResultItemId,
+            packet.ResultQuantity
+        );
+    }
+}
+
+/// <summary>
+/// ⭐ NOVO: Handle de atualização da fila de crafting
+/// </summary>
+private void HandleCraftQueueUpdate(byte[] data)
+{
+    var packet = CraftQueueUpdatePacket.Deserialize(data);
+
+    // Converte para formato do cliente
+    var queueItems = new List<Crafting.CraftQueueItemData>();
+
+    foreach (var item in packet.QueueItems)
+    {
+        queueItems.Add(new Crafting.CraftQueueItemData
+        {
+            recipeId = item.RecipeId,
+            progress = item.Progress,
+            remainingTime = item.RemainingTime
+        });
+    }
+
+    // Envia para CraftingManager
+    if (Crafting.CraftingManager.Instance != null)
+    {
+        Crafting.CraftingManager.Instance.UpdateQueue(queueItems);
+    }
+}
+}
+}
+

@@ -173,7 +173,7 @@ namespace RustlikeClient.UI
             while (elapsed < fadeOutDuration)
             {
                 elapsed += Time.deltaTime;
-                canvasGroup.alpha = Mathf.Lerp(1f, 0f, elapsed / fadeOutDuration);
+              //  canvasGroup.alpha = Mathf.Lerp(1f, 0f, elapsed / fadeOutDuration);
                 yield return null;
             }
 
