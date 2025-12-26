@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace RustlikeServer.Items
 {
@@ -20,6 +23,7 @@ namespace RustlikeServer.Items
     /// </summary>
     public enum ConsumableType
     {
+        None,          // Não é consumível
         Food,          // Restaura fome
         Water,         // Restaura sede
         Medicine,      // Restaura vida
@@ -27,45 +31,94 @@ namespace RustlikeServer.Items
     }
 
     /// <summary>
-    /// Definição de um item (template/blueprint)
+    /// ⭐ ATUALIZADO: Definição de item com suporte JSON
     /// </summary>
+    [Serializable]
     public class ItemDefinition
     {
+        [JsonPropertyName("id")]
         public int Id { get; set; }
+        
+        [JsonPropertyName("name")]
         public string Name { get; set; }
+        
+        [JsonPropertyName("description")]
         public string Description { get; set; }
-        public ItemType Type { get; set; }
+        
+        [JsonPropertyName("type")]
+        public string Type { get; set; } // Como string no JSON
+        
+        [JsonPropertyName("maxStack")]
         public int MaxStack { get; set; }
+        
+        [JsonPropertyName("isConsumable")]
         public bool IsConsumable { get; set; }
         
         // Efeitos do consumível
-        public ConsumableType ConsumableCategory { get; set; }
+        [JsonPropertyName("consumableType")]
+        public string ConsumableCategory { get; set; } // Como string no JSON
+        
+        [JsonPropertyName("healthRestore")]
         public float HealthRestore { get; set; }
+        
+        [JsonPropertyName("hungerRestore")]
         public float HungerRestore { get; set; }
+        
+        [JsonPropertyName("thirstRestore")]
         public float ThirstRestore { get; set; }
 
-        public ItemDefinition(int id, string name, string desc, ItemType type, int maxStack)
+        // Propriedades auxiliares (não serializadas)
+        [JsonIgnore]
+        public ItemType ItemTypeEnum
         {
-            Id = id;
-            Name = name;
-            Description = desc;
-            Type = type;
-            MaxStack = maxStack;
-            IsConsumable = false;
+            get => ParseItemType(Type);
         }
 
-        /// <summary>
-        /// Define efeitos de consumível
-        /// </summary>
-        public ItemDefinition SetConsumableEffect(ConsumableType category, float health, float hunger, float thirst)
+        [JsonIgnore]
+        public ConsumableType ConsumableTypeEnum
         {
-            IsConsumable = true;
-            ConsumableCategory = category;
-            HealthRestore = health;
-            HungerRestore = hunger;
-            ThirstRestore = thirst;
-            return this;
+            get => ParseConsumableType(ConsumableCategory);
         }
+
+        private ItemType ParseItemType(string type)
+        {
+            return type switch
+            {
+                "Consumable" => ItemType.Consumable,
+                "Resource" => ItemType.Resource,
+                "Tool" => ItemType.Tool,
+                "Building" => ItemType.Building,
+                "Clothing" => ItemType.Clothing,
+                _ => ItemType.Resource
+            };
+        }
+
+        private ConsumableType ParseConsumableType(string type)
+        {
+            return type switch
+            {
+                "Food" => ConsumableType.Food,
+                "Water" => ConsumableType.Water,
+                "Medicine" => ConsumableType.Medicine,
+                "Hybrid" => ConsumableType.Hybrid,
+                _ => ConsumableType.None
+            };
+        }
+
+        public override string ToString()
+        {
+            return $"{Name} (ID: {Id}, Stack: {MaxStack})";
+        }
+    }
+
+    /// <summary>
+    /// ⭐ NOVO: Estrutura do arquivo JSON
+    /// </summary>
+    [Serializable]
+    public class ItemsDatabase
+    {
+        [JsonPropertyName("items")]
+        public List<ItemDefinition> Items { get; set; }
     }
 
     /// <summary>
@@ -117,65 +170,169 @@ namespace RustlikeServer.Items
     }
 
     /// <summary>
-    /// Database de itens do jogo
+    /// ⭐ ATUALIZADO: Database de itens carregado de JSON
     /// </summary>
     public static class ItemDatabase
     {
         private static Dictionary<int, ItemDefinition> _items = new Dictionary<int, ItemDefinition>();
+        private const string ITEMS_FILE = "items.json";
 
         static ItemDatabase()
         {
-            InitializeItems();
+            LoadItems();
         }
 
-        private static void InitializeItems()
+        /// <summary>
+        /// ⭐ NOVO: Carrega itens do arquivo JSON
+        /// </summary>
+        private static void LoadItems()
         {
-            // === CONSUMÍVEIS - COMIDA ===
-            RegisterItem(new ItemDefinition(1, "Apple", "Uma maçã fresca. Restaura fome.", ItemType.Consumable, 10)
-                .SetConsumableEffect(ConsumableType.Food, 0, 20, 5));
+            Console.WriteLine("[ItemDatabase] Carregando itens do JSON...");
 
-            RegisterItem(new ItemDefinition(2, "Cooked Meat", "Carne cozida. Muito nutritivo.", ItemType.Consumable, 20)
-                .SetConsumableEffect(ConsumableType.Food, 0, 50, 0));
+            if (!File.Exists(ITEMS_FILE))
+            {
+                Console.WriteLine($"[ItemDatabase] ⚠️ Arquivo {ITEMS_FILE} não encontrado! Criando arquivo padrão...");
+                CreateDefaultItemsFile();
+            }
 
-            RegisterItem(new ItemDefinition(3, "Chocolate Bar", "Barra de chocolate. Energia rápida.", ItemType.Consumable, 10)
-                .SetConsumableEffect(ConsumableType.Food, 0, 30, 10));
+            try
+            {
+                string json = File.ReadAllText(ITEMS_FILE);
+                
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    ReadCommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                };
 
-            // === CONSUMÍVEIS - ÁGUA ===
-            RegisterItem(new ItemDefinition(4, "Water Bottle", "Garrafa de água. Mata a sede.", ItemType.Consumable, 5)
-                .SetConsumableEffect(ConsumableType.Water, 0, 0, 50));
+                var database = JsonSerializer.Deserialize<ItemsDatabase>(json, options);
 
-            RegisterItem(new ItemDefinition(5, "Soda Can", "Refrigerante. Hidrata e energiza.", ItemType.Consumable, 10)
-                .SetConsumableEffect(ConsumableType.Water, 0, 10, 40));
+                if (database?.Items != null)
+                {
+                    foreach (var item in database.Items)
+                    {
+                        _items[item.Id] = item;
+                    }
 
-            // === CONSUMÍVEIS - REMÉDIOS ===
-            RegisterItem(new ItemDefinition(6, "Bandage", "Bandagem. Restaura 20 HP.", ItemType.Consumable, 10)
-                .SetConsumableEffect(ConsumableType.Medicine, 20, 0, 0));
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[ItemDatabase] ✅ {_items.Count} itens carregados de {ITEMS_FILE}");
+                    Console.ResetColor();
 
-            RegisterItem(new ItemDefinition(7, "Medical Syringe", "Seringa médica. Restaura 50 HP.", ItemType.Consumable, 5)
-                .SetConsumableEffect(ConsumableType.Medicine, 50, 0, 0));
-
-            RegisterItem(new ItemDefinition(8, "Large Medkit", "Kit médico grande. Full heal.", ItemType.Consumable, 3)
-                .SetConsumableEffect(ConsumableType.Medicine, 100, 0, 0));
-
-            // === CONSUMÍVEIS - HÍBRIDOS ===
-            RegisterItem(new ItemDefinition(9, "Survival Ration", "Ração de sobrevivência. Restaura tudo um pouco.", ItemType.Consumable, 5)
-                .SetConsumableEffect(ConsumableType.Hybrid, 10, 30, 30));
-
-            RegisterItem(new ItemDefinition(10, "Energy Drink", "Bebida energética. Boost completo!", ItemType.Consumable, 5)
-                .SetConsumableEffect(ConsumableType.Hybrid, 20, 40, 60));
-
-            // === RECURSOS (para depois) ===
-            RegisterItem(new ItemDefinition(100, "Wood", "Madeira. Material de construção básico.", ItemType.Resource, 1000));
-            RegisterItem(new ItemDefinition(101, "Stone", "Pedra. Mais resistente que madeira.", ItemType.Resource, 1000));
-            RegisterItem(new ItemDefinition(102, "Metal Ore", "Minério de metal. Muito valioso.", ItemType.Resource, 500));
-			RegisterItem(new ItemDefinition(103, "Sulfur Ore", "Minério de enxofre. Usado em explosivos.", ItemType.Resource, 500));
-			
-            Console.WriteLine($"[ItemDatabase] {_items.Count} itens carregados");
+                    // Log de itens carregados
+                    LogLoadedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[ItemDatabase] ❌ Erro ao carregar itens: {ex.Message}");
+                Console.ResetColor();
+                
+                // Se falhar, cria arquivo padrão
+                CreateDefaultItemsFile();
+            }
         }
 
-        private static void RegisterItem(ItemDefinition item)
+        /// <summary>
+        /// ⭐ NOVO: Cria arquivo JSON padrão
+        /// </summary>
+        private static void CreateDefaultItemsFile()
         {
-            _items[item.Id] = item;
+            Console.WriteLine("[ItemDatabase] Criando items.json padrão...");
+
+            var defaultItems = new ItemsDatabase
+            {
+                Items = new List<ItemDefinition>()
+            };
+
+            // Adiciona itens padrão (mesmos do código original)
+            defaultItems.Items.AddRange(new[]
+            {
+                // Consumíveis - Comida
+                new ItemDefinition { Id = 1, Name = "Apple", Description = "Uma maçã fresca. Restaura fome.", Type = "Consumable", MaxStack = 10, IsConsumable = true, ConsumableCategory = "Food", HealthRestore = 0, HungerRestore = 20, ThirstRestore = 5 },
+                new ItemDefinition { Id = 2, Name = "Cooked Meat", Description = "Carne cozida. Muito nutritivo.", Type = "Consumable", MaxStack = 20, IsConsumable = true, ConsumableCategory = "Food", HealthRestore = 0, HungerRestore = 50, ThirstRestore = 0 },
+                new ItemDefinition { Id = 3, Name = "Chocolate Bar", Description = "Barra de chocolate. Energia rápida.", Type = "Consumable", MaxStack = 10, IsConsumable = true, ConsumableCategory = "Food", HealthRestore = 0, HungerRestore = 30, ThirstRestore = 10 },
+
+                // Consumíveis - Água
+                new ItemDefinition { Id = 4, Name = "Water Bottle", Description = "Garrafa de água. Mata a sede.", Type = "Consumable", MaxStack = 5, IsConsumable = true, ConsumableCategory = "Water", HealthRestore = 0, HungerRestore = 0, ThirstRestore = 50 },
+                new ItemDefinition { Id = 5, Name = "Soda Can", Description = "Refrigerante. Hidrata e energiza.", Type = "Consumable", MaxStack = 10, IsConsumable = true, ConsumableCategory = "Water", HealthRestore = 0, HungerRestore = 10, ThirstRestore = 40 },
+
+                // Consumíveis - Remédios
+                new ItemDefinition { Id = 6, Name = "Bandage", Description = "Bandagem. Restaura 20 HP.", Type = "Consumable", MaxStack = 10, IsConsumable = true, ConsumableCategory = "Medicine", HealthRestore = 20, HungerRestore = 0, ThirstRestore = 0 },
+                new ItemDefinition { Id = 7, Name = "Medical Syringe", Description = "Seringa médica. Restaura 50 HP.", Type = "Consumable", MaxStack = 5, IsConsumable = true, ConsumableCategory = "Medicine", HealthRestore = 50, HungerRestore = 0, ThirstRestore = 0 },
+                new ItemDefinition { Id = 8, Name = "Large Medkit", Description = "Kit médico grande. Full heal.", Type = "Consumable", MaxStack = 3, IsConsumable = true, ConsumableCategory = "Medicine", HealthRestore = 100, HungerRestore = 0, ThirstRestore = 0 },
+
+                // Consumíveis - Híbridos
+                new ItemDefinition { Id = 9, Name = "Survival Ration", Description = "Ração de sobrevivência. Restaura tudo um pouco.", Type = "Consumable", MaxStack = 5, IsConsumable = true, ConsumableCategory = "Hybrid", HealthRestore = 10, HungerRestore = 30, ThirstRestore = 30 },
+                new ItemDefinition { Id = 10, Name = "Energy Drink", Description = "Bebida energética. Boost completo!", Type = "Consumable", MaxStack = 5, IsConsumable = true, ConsumableCategory = "Hybrid", HealthRestore = 20, HungerRestore = 40, ThirstRestore = 60 },
+
+                // Recursos
+                new ItemDefinition { Id = 100, Name = "Wood", Description = "Madeira. Material de construção básico.", Type = "Resource", MaxStack = 1000, IsConsumable = false, ConsumableCategory = "None", HealthRestore = 0, HungerRestore = 0, ThirstRestore = 0 },
+                new ItemDefinition { Id = 101, Name = "Stone", Description = "Pedra. Mais resistente que madeira.", Type = "Resource", MaxStack = 1000, IsConsumable = false, ConsumableCategory = "None", HealthRestore = 0, HungerRestore = 0, ThirstRestore = 0 },
+                new ItemDefinition { Id = 102, Name = "Metal Ore", Description = "Minério de metal. Muito valioso.", Type = "Resource", MaxStack = 500, IsConsumable = false, ConsumableCategory = "None", HealthRestore = 0, HungerRestore = 0, ThirstRestore = 0 },
+                new ItemDefinition { Id = 103, Name = "Sulfur Ore", Description = "Minério de enxofre. Usado em explosivos.", Type = "Resource", MaxStack = 500, IsConsumable = false, ConsumableCategory = "None", HealthRestore = 0, HungerRestore = 0, ThirstRestore = 0 },
+            });
+
+            SaveItems(defaultItems);
+            
+            // Recarrega após criar
+            LoadItems();
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Salva itens no JSON
+        /// </summary>
+        private static void SaveItems(ItemsDatabase database)
+        {
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                };
+
+                string json = JsonSerializer.Serialize(database, options);
+                File.WriteAllText(ITEMS_FILE, json);
+
+                Console.WriteLine($"[ItemDatabase] ✅ Itens salvos em {ITEMS_FILE}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ItemDatabase] ❌ Erro ao salvar itens: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Log dos itens carregados
+        /// </summary>
+        private static void LogLoadedItems()
+        {
+            Console.WriteLine("\n========== ITENS CARREGADOS ==========");
+            
+            var consumables = 0;
+            var resources = 0;
+            var tools = 0;
+            var buildings = 0;
+
+            foreach (var item in _items.Values)
+            {
+                switch (item.ItemTypeEnum)
+                {
+                    case ItemType.Consumable: consumables++; break;
+                    case ItemType.Resource: resources++; break;
+                    case ItemType.Tool: tools++; break;
+                    case ItemType.Building: buildings++; break;
+                }
+            }
+
+            Console.WriteLine($"Consumíveis: {consumables}");
+            Console.WriteLine($"Recursos: {resources}");
+            Console.WriteLine($"Ferramentas: {tools}");
+            Console.WriteLine($"Construção: {buildings}");
+            Console.WriteLine($"TOTAL: {_items.Count}");
+            Console.WriteLine("=====================================\n");
         }
 
         public static ItemDefinition GetItem(int itemId)
@@ -200,6 +357,15 @@ namespace RustlikeServer.Items
                 if (item.IsConsumable)
                     yield return item;
             }
+        }
+
+        /// <summary>
+        /// ⭐ NOVO: Recarrega itens do JSON (útil para hot-reload)
+        /// </summary>
+        public static void Reload()
+        {
+            _items.Clear();
+            LoadItems();
         }
     }
 }
